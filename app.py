@@ -19,23 +19,18 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    # Create Users Table
     conn.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL, department TEXT NOT NULL, role TEXT NOT NULL)''')
-            
-    # Create Attendance Table
     conn.execute('''CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT NOT NULL,
             clock_in TEXT, clock_out TEXT, FOREIGN KEY (user_id) REFERENCES users (id))''')
             
-    # Safely upgrade existing database with a status column
     try:
         conn.execute("ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
     except sqlite3.OperationalError:
-        pass # Column already exists
+        pass 
     
-    # Create a default admin if table is empty
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
@@ -45,12 +40,10 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Helper function to get today's live presence
 def get_todays_roster():
     ist_timezone = pytz.timezone('Asia/Kolkata')
     today = datetime.now(ist_timezone).strftime('%Y-%m-%d')
     conn = get_db_connection()
-    # Fetch all staff and their attendance for today (if any)
     query = '''
         SELECT u.username, u.department, a.clock_in, a.clock_out, a.status 
         FROM users u 
@@ -128,21 +121,28 @@ def clock():
 @app.route('/staff')
 def staff_dashboard():
     if 'user_id' not in session or session['role'] != 'Staff': return redirect(url_for('login'))
+    
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    is_sunday = datetime.now(ist_timezone).weekday() == 6 # 6 represents Sunday
+    
     conn = get_db_connection()
     logs = conn.execute('SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 10', (session['user_id'],)).fetchall()
     conn.close()
-    roster = get_todays_roster()
-    return render_template('staff.html', logs=logs, roster=roster)
+    
+    return render_template('staff.html', logs=logs, roster=get_todays_roster(), is_sunday=is_sunday)
 
 @app.route('/admin')
 def admin_dashboard():
     if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
+    
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    is_sunday = datetime.now(ist_timezone).weekday() == 6
+    
     conn = get_db_connection()
-    # Get user list for the dropdowns
     users = conn.execute("SELECT username FROM users WHERE role != 'Admin' ORDER BY username").fetchall()
     conn.close()
-    roster = get_todays_roster()
-    return render_template('admin.html', users=users, roster=roster)
+    
+    return render_template('admin.html', users=users, roster=get_todays_roster(), is_sunday=is_sunday)
 
 @app.route('/admin_action', methods=['POST'])
 def admin_action():
@@ -151,7 +151,6 @@ def admin_action():
     action_type = request.form.get('action_type')
     conn = get_db_connection()
     
-    # 1. Add New User
     if action_type == 'add_user':
         new_user = request.form['new_username']
         new_pass = generate_password_hash(request.form['new_password'])
@@ -162,14 +161,12 @@ def admin_action():
         except sqlite3.IntegrityError:
             flash("Error: Username exists.")
             
-    # 2. Reset Password
     elif action_type == 'reset_password':
         target = request.form['target_user']
         new_pass = generate_password_hash(request.form['new_password'])
         conn.execute("UPDATE users SET password = ? WHERE username = ?", (new_pass, target))
         flash(f"Password reset for {target}.")
         
-    # 3. Mark Leave or Absent
     elif action_type == 'mark_leave':
         target = request.form['target_user']
         status = request.form['status']
@@ -220,4 +217,3 @@ def logout():
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=5000)
-

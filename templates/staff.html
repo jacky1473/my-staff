@@ -51,7 +51,9 @@
                                 <td>
                                     {% if row.status == 'Leave' %} <span class="badge bg-primary">On Leave</span>
                                     {% elif row.status == 'Absent' %} <span class="badge bg-danger">Absent</span>
-                                    {% elif row.clock_in %} <span class="badge bg-success">In Office</span>
+                                    {% elif is_sunday and not row.clock_in %} <span class="badge bg-info text-dark">Sunday Off</span>
+                                    {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark">Shift Ended</span>
+                                    {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success">In Office</span>
                                     {% else %} <span class="badge bg-secondary">Not Arrived</span>
                                     {% endif %}
                                 </td>
@@ -66,4 +68,3 @@
     </div>
 </body>
 </html>
-
