@@ -1,58 +1,95 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Admin Panel</title>
+    <title>Admin Command Center</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(-45deg, #0f2027, #203a43, #2c5364, #141e30, #243b55);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            min-height: 100vh;
+        }
+        @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 1rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+        .form-control, .form-select { background: rgba(255, 255, 255, 0.9); border: none; }
+        .table-glass { color: #fff; }
+        .table-glass th, .table-glass td { border-color: rgba(255,255,255,0.1); background: transparent !important; color: #fff !important; }
+        .table-glass thead th { background: rgba(0,0,0,0.3) !important; color: #00C9FF !important; border-bottom: 2px solid #00C9FF; }
+        .btn-magical { background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%); border: none; color: #000; font-weight: bold; }
+        .btn-magical:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 201, 255, 0.6); color: #000; }
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>Management Console (Admin)</h2>
-            <a href="/logout" class="btn btn-danger">Logout</a>
+<body>
+    <div class="container-fluid mt-4 px-4">
+        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
+            <h2><span style="color: #00C9FF;">Admin</span> Master Command Center</h2>
+            <a href="/logout" class="btn btn-danger shadow">Logout Console</a>
         </div>
         
         {% with messages = get_flashed_messages() %}
-            {% if messages %}{% for msg in messages %}<div class="alert alert-success">{{ msg }}</div>{% endfor %}{% endif %}
+            {% if messages %}{% for msg in messages %}<div class="alert alert-success bg-success text-white border-0">{{ msg }}</div>{% endfor %}{% endif %}
         {% endwith %}
 
         <div class="row">
-            <div class="col-md-4">
-                <div class="card p-3 shadow-sm mb-3">
-                    <h5>Generate Reports</h5>
-                    <a href="/export/weekly" class="btn btn-outline-primary w-100 mb-2">Weekly Report (.xlsx)</a>
-                    <a href="/export/monthly" class="btn btn-outline-success w-100">Monthly Report (.xlsx)</a>
+            <div class="col-lg-3 col-md-4">
+                
+                <div class="card p-4 glass-card mb-4">
+                    <h5 class="text-info mb-3">Targeted Excel Reports</h5>
+                    <form action="/export/weekly" method="GET" class="mb-3 border-bottom border-secondary pb-3">
+                        <select name="target_user" class="form-select mb-2">
+                            <option value="All">Fetch All Users</option>
+                            {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-outline-info w-100">Download Weekly Data</button>
+                    </form>
+                    <form action="/export/monthly" method="GET">
+                        <select name="target_user" class="form-select mb-2">
+                            <option value="All">Fetch All Users</option>
+                            {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-outline-success w-100">Download Monthly Data</button>
+                    </form>
                 </div>
 
-                <div class="card p-3 shadow-sm mb-3">
-                    <h5>Create New Account</h5>
+                <div class="card p-4 glass-card mb-4">
+                    <h5 class="text-info mb-3">Add Employee</h5>
                     <form action="/admin_action" method="POST">
                         <input type="hidden" name="action_type" value="add_user">
                         <input type="text" name="new_username" class="form-control mb-2" placeholder="Username" required>
                         <input type="password" name="new_password" class="form-control mb-2" placeholder="Password" required>
-                        <select name="department" class="form-select mb-2" required>
+                        <select name="department" class="form-select mb-3" required>
                             <option value="IT">IT</option><option value="MIS">MIS</option>
                             <option value="QA">QA</option><option value="TL">TL</option><option value="Manager">Manager</option>
                         </select>
-                        <button type="submit" class="btn btn-dark w-100">Add User</button>
+                        <button type="submit" class="btn btn-magical w-100">Create Account</button>
                     </form>
                 </div>
 
-                <div class="card p-3 shadow-sm">
-                    <h5>User Management</h5>
-                    
-                    <form action="/admin_action" method="POST" class="mb-3 border-bottom pb-3">
+                <div class="card p-4 glass-card mb-4">
+                    <h5 class="text-info mb-3">Account Overrides</h5>
+                    <form action="/admin_action" method="POST" class="mb-3 border-bottom border-secondary pb-3">
                         <input type="hidden" name="action_type" value="reset_password">
-                        <label class="small text-muted">Reset Password</label>
+                        <label class="small text-light opacity-75">Force Password Reset</label>
                         <select name="target_user" class="form-select mb-2" required>
                             {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
                         </select>
                         <input type="password" name="new_password" class="form-control mb-2" placeholder="New Password" required>
-                        <button type="submit" class="btn btn-warning w-100 btn-sm">Force Password Reset</button>
+                        <button type="submit" class="btn btn-warning w-100 btn-sm">Reset</button>
                     </form>
 
-                    <form action="/admin_action" method="POST" class="mb-3 border-bottom pb-3">
+                    <form action="/admin_action" method="POST" class="mb-3 border-bottom border-secondary pb-3">
                         <input type="hidden" name="action_type" value="change_shift">
-                        <label class="small text-muted">Change Staff Shift</label>
+                        <label class="small text-light opacity-75">Reassign Shift Timing</label>
                         <select name="target_user" class="form-select mb-2" required>
                             {% for u in users %}<option value="{{ u.username }}">{{ u.username }} ({{ u.shift }})</option>{% endfor %}
                         </select>
@@ -62,50 +99,52 @@
                             <option value="02:00 PM - 11:00 PM">02:00 PM - 11:00 PM</option>
                             <option value="Night Shift">Night Shift</option>
                         </select>
-                        <button type="submit" class="btn btn-info w-100 btn-sm text-white">Update Shift</button>
+                        <button type="submit" class="btn btn-magical w-100 btn-sm">Update Shift</button>
                     </form>
 
                     <form action="/admin_action" method="POST">
                         <input type="hidden" name="action_type" value="mark_leave">
-                        <label class="small text-muted">Mark Leave / Absent</label>
+                        <label class="small text-light opacity-75">Force Status Override</label>
                         <select name="target_user" class="form-select mb-2" required>
                             {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
                         </select>
                         <select name="status" class="form-select mb-2" required>
-                            <option value="Leave">On Leave</option>
-                            <option value="Absent">Absent</option>
+                            <option value="Leave">On Leave</option><option value="Absent">Absent</option>
                         </select>
                         <button type="submit" class="btn btn-danger w-100 btn-sm">Apply Status</button>
                     </form>
                 </div>
             </div>
 
-            <div class="col-md-8">
-                <div class="card p-4 shadow-sm h-100">
-                    <h4>Today's Live Roster</h4>
-                    <table class="table table-sm table-hover border">
-                        <thead class="table-light"><tr><th>Name</th><th>Dept</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th></tr></thead>
-                        <tbody>
-                            {% for row in roster %}
-                            <tr>
-                                <td>{{ row.username }}</td>
-                                <td>{{ row.department }}</td>
-                                <td><span class="badge bg-light text-dark border">{{ row.shift }}</span></td>
-                                <td>
-                                    {% if row.status == 'Leave' %} <span class="badge bg-primary">On Leave</span>
-                                    {% elif row.status == 'Absent' %} <span class="badge bg-danger">Absent</span>
-                                    {% elif is_sunday and not row.clock_in %} <span class="badge bg-info text-dark">Sunday Off</span>
-                                    {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark">Shift Ended</span>
-                                    {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success">In Office</span>
-                                    {% else %} <span class="badge bg-secondary">Not Arrived</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ row.clock_in or '-' }}</td>
-                                <td>{{ row.clock_out or '-' }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+            <div class="col-lg-9 col-md-8">
+                <div class="card p-4 glass-card h-100">
+                    <h4 class="text-info">Master Shift & Presence Monitor</h4>
+                    <p class="text-light opacity-75 small">Live view of all network staff. Automatically refreshes on action.</p>
+                    <div class="table-responsive mt-3">
+                        <table class="table table-hover table-glass align-middle">
+                            <thead><tr><th>Name</th><th>Dept</th><th>Assigned Shift</th><th>Live Status</th><th>Time In</th><th>Time Out</th></tr></thead>
+                            <tbody>
+                                {% for row in roster %}
+                                <tr>
+                                    <td class="fw-bold">{{ row.username }}</td>
+                                    <td>{{ row.department }}</td>
+                                    <td><span class="badge bg-secondary opacity-75 border">{{ row.shift }}</span></td>
+                                    <td>
+                                        {% if row.status == 'Leave' %} <span class="badge bg-primary px-3 py-2">On Leave</span>
+                                        {% elif row.status == 'Absent' %} <span class="badge bg-danger px-3 py-2">Absent</span>
+                                        {% elif is_sunday and not row.clock_in %} <span class="badge bg-info text-dark px-3 py-2">Sunday Off</span>
+                                        {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark border px-3 py-2">Shift Ended</span>
+                                        {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success px-3 py-2 shadow-sm">In Office</span>
+                                        {% else %} <span class="badge bg-secondary opacity-50 px-3 py-2">Not Arrived</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-success fw-bold">{{ row.clock_in or '-' }}</td>
+                                    <td class="text-warning fw-bold">{{ row.clock_out or '-' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
