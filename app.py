@@ -20,26 +20,20 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     # Create Users Table
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            department TEXT NOT NULL,
-            role TEXT NOT NULL
-        )
-    ''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL, department TEXT NOT NULL, role TEXT NOT NULL)''')
+            
     # Create Attendance Table
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS attendance (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            date TEXT NOT NULL,
-            clock_in TEXT,
-            clock_out TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT NOT NULL,
+            clock_in TEXT, clock_out TEXT, FOREIGN KEY (user_id) REFERENCES users (id))''')
+            
+    # Safely upgrade existing database with a status column
+    try:
+        conn.execute("ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
+    except sqlite3.OperationalError:
+        pass # Column already exists
     
     # Create a default admin if table is empty
     cursor = conn.cursor()
@@ -48,19 +42,30 @@ def init_db():
         hashed_pw = generate_password_hash('admin123')
         conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)",
                      ('admin', hashed_pw, 'IT', 'Admin'))
-        # Create a sample support staff user
-        hashed_user_pw = generate_password_hash('staff123')
-        conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)",
-                     ('staff_user', hashed_user_pw, 'QA', 'Staff'))
-        conn.commit()
+    conn.commit()
     conn.close()
+
+# Helper function to get today's live presence
+def get_todays_roster():
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    today = datetime.now(ist_timezone).strftime('%Y-%m-%d')
+    conn = get_db_connection()
+    # Fetch all staff and their attendance for today (if any)
+    query = '''
+        SELECT u.username, u.department, a.clock_in, a.clock_out, a.status 
+        FROM users u 
+        LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
+        WHERE u.role != 'Admin'
+        ORDER BY u.department, u.username
+    '''
+    roster = conn.execute(query, (today,)).fetchall()
+    conn.close()
+    return roster
 
 @app.route('/')
 def index():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    if session['role'] == 'Admin':
-        return redirect(url_for('admin_dashboard'))
+    if 'user_id' not in session: return redirect(url_for('login'))
+    if session['role'] == 'Admin': return redirect(url_for('admin_dashboard'))
     return redirect(url_for('staff_dashboard'))
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -86,18 +91,16 @@ def login():
         else:
             flash('Invalid credentials. Please try again.')
     return render_template('login.html')
+
 @app.route('/clock', methods=['POST'])
 def clock():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
+    if 'user_id' not in session: return redirect(url_for('login'))
         
     action = request.form['action']
     user_id = session['user_id']
     
-    # Get exact local time
     ist_timezone = pytz.timezone('Asia/Kolkata')
     local_time = datetime.now(ist_timezone)
-    
     today = local_time.strftime('%Y-%m-%d')
     now_time = local_time.strftime('%H:%M:%S')
     
@@ -106,7 +109,8 @@ def clock():
     
     if action == 'in':
         if not record:
-            conn.execute('INSERT INTO attendance (user_id, date, clock_in) VALUES (?, ?, ?)', (user_id, today, now_time))
+            conn.execute('INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?, ?, ?, ?)', 
+                         (user_id, today, now_time, 'Present'))
             flash('Clocked In successfully!')
         else:
             flash('You have already Clocked In today.')
@@ -114,10 +118,8 @@ def clock():
         if record and not record['clock_out']:
             conn.execute('UPDATE attendance SET clock_out = ? WHERE id = ?', (now_time, record['id']))
             flash('Clocked Out successfully!')
-        elif record and record['clock_out']:
-            flash('You have already Clocked Out today.')
         else:
-            flash('You must Clock In first!')
+            flash('You must Clock In first or have already Clocked Out.')
             
     conn.commit()
     conn.close()
@@ -125,30 +127,74 @@ def clock():
 
 @app.route('/staff')
 def staff_dashboard():
-    if 'user_id' not in session or session['role'] != 'Staff':
-        return redirect(url_for('login'))
+    if 'user_id' not in session or session['role'] != 'Staff': return redirect(url_for('login'))
     conn = get_db_connection()
     logs = conn.execute('SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 10', (session['user_id'],)).fetchall()
     conn.close()
-    return render_template('staff.html', logs=logs)
+    roster = get_todays_roster()
+    return render_template('staff.html', logs=logs, roster=roster)
 
 @app.route('/admin')
 def admin_dashboard():
-    if 'user_id' not in session or session['role'] != 'Admin':
-        return redirect(url_for('login'))
-    return render_template('admin.html')
+    if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
+    conn = get_db_connection()
+    # Get user list for the dropdowns
+    users = conn.execute("SELECT username FROM users WHERE role != 'Admin' ORDER BY username").fetchall()
+    conn.close()
+    roster = get_todays_roster()
+    return render_template('admin.html', users=users, roster=roster)
+
+@app.route('/admin_action', methods=['POST'])
+def admin_action():
+    if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
+        
+    action_type = request.form.get('action_type')
+    conn = get_db_connection()
+    
+    # 1. Add New User
+    if action_type == 'add_user':
+        new_user = request.form['new_username']
+        new_pass = generate_password_hash(request.form['new_password'])
+        dept = request.form['department']
+        try:
+            conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)", (new_user, new_pass, dept, 'Staff'))
+            flash(f"User '{new_user}' created.")
+        except sqlite3.IntegrityError:
+            flash("Error: Username exists.")
+            
+    # 2. Reset Password
+    elif action_type == 'reset_password':
+        target = request.form['target_user']
+        new_pass = generate_password_hash(request.form['new_password'])
+        conn.execute("UPDATE users SET password = ? WHERE username = ?", (new_pass, target))
+        flash(f"Password reset for {target}.")
+        
+    # 3. Mark Leave or Absent
+    elif action_type == 'mark_leave':
+        target = request.form['target_user']
+        status = request.form['status']
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+        today = datetime.now(ist_timezone).strftime('%Y-%m-%d')
+        
+        user = conn.execute('SELECT id FROM users WHERE username = ?', (target,)).fetchone()
+        if user:
+            record = conn.execute('SELECT id FROM attendance WHERE user_id = ? AND date = ?', (user['id'], today)).fetchone()
+            if record:
+                conn.execute('UPDATE attendance SET status = ? WHERE id = ?', (status, record['id']))
+            else:
+                conn.execute('INSERT INTO attendance (user_id, date, status) VALUES (?, ?, ?)', (user['id'], today, status))
+            flash(f"{target} marked as {status} for today.")
+
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin_dashboard'))
 
 @app.route('/export/<string:report_type>')
 def export_excel(report_type):
-    if 'user_id' not in session or session['role'] != 'Admin':
-        return redirect(url_for('login'))
-        
+    if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
     conn = get_db_connection()
-    query = '''
-        SELECT u.username, u.department, a.date, a.clock_in, a.clock_out 
-        FROM attendance a 
-        JOIN users u ON a.user_id = u.id
-    '''
+    query = '''SELECT u.username, u.department, a.date, a.clock_in, a.clock_out, a.status 
+               FROM attendance a JOIN users u ON a.user_id = u.id'''
     df = pd.read_sql_query(query, conn)
     conn.close()
     
@@ -158,43 +204,13 @@ def export_excel(report_type):
         
     df['date'] = pd.to_datetime(df['date'])
     today = datetime.now()
-    
-    if report_type == 'weekly':
-        start_date = today - timedelta(days=7)
-        df = df[df['date'] >= start_date]
-        filename = "weekly_attendance.xlsx"
-    elif report_type == 'monthly':
-        start_date = today - timedelta(days=30)
-        df = df[df['date'] >= start_date]
-        filename = "monthly_attendance.xlsx"
+    if report_type == 'weekly': df = df[df['date'] >= (today - timedelta(days=7))]
+    elif report_type == 'monthly': df = df[df['date'] >= (today - timedelta(days=30))]
         
     df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-    output_path = f"/tmp/{filename}"
+    output_path = f"/tmp/{report_type}_attendance.xlsx"
     df.to_excel(output_path, index=False)
-    
     return send_file(output_path, as_attachment=True)
-
-@app.route('/add_user', methods=['POST'])
-def add_user():
-    if 'user_id' not in session or session['role'] != 'Admin':
-        return redirect(url_for('login'))
-
-    new_username = request.form['new_username']
-    new_password = generate_password_hash(request.form['new_password'])
-    department = request.form['department']
-
-    conn = get_db_connection()
-    try:
-        conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)",
-                     (new_username, new_password, department, 'Staff'))
-        conn.commit()
-        flash(f"User '{new_username}' added successfully to {department}!")
-    except sqlite3.IntegrityError:
-        flash("Error: That username already exists.")
-    finally:
-        conn.close()
-
-    return redirect(url_for('admin_dashboard'))
 
 @app.route('/logout')
 def logout():
@@ -204,3 +220,4 @@ def logout():
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=5000)
+

@@ -8,47 +8,87 @@
     <div class="container mt-5">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2>Management Console (Admin)</h2>
-            <a href="/logout" class="btn btn-danger btn-sm">Logout</a>
+            <a href="/logout" class="btn btn-danger">Logout</a>
         </div>
         
         {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                {% for msg in messages %}<div class="alert alert-success">{{ msg }}</div>{% endfor %}
-            {% endif %}
+            {% if messages %}{% for msg in messages %}<div class="alert alert-success">{{ msg }}</div>{% endfor %}{% endif %}
         {% endwith %}
 
         <div class="row">
-            <div class="col-md-6 mb-4">
-                <div class="card p-4 shadow-sm h-100">
-                    <h4>Generate Attendance Reports</h4>
-                    <div class="mt-3">
-                        <a href="/export/weekly" class="btn btn-outline-primary w-100 mb-2">Download Weekly Report (.xlsx)</a>
-                        <a href="/export/monthly" class="btn btn-outline-success w-100">Download Monthly Report (.xlsx)</a>
-                    </div>
+            <div class="col-md-5">
+                <div class="card p-3 shadow-sm mb-3">
+                    <h5>Generate Reports</h5>
+                    <a href="/export/weekly" class="btn btn-outline-primary w-100 mb-2">Weekly Report (.xlsx)</a>
+                    <a href="/export/monthly" class="btn btn-outline-success w-100">Monthly Report (.xlsx)</a>
+                </div>
+
+                <div class="card p-3 shadow-sm mb-3">
+                    <h5>Create New Account</h5>
+                    <form action="/admin_action" method="POST">
+                        <input type="hidden" name="action_type" value="add_user">
+                        <input type="text" name="new_username" class="form-control mb-2" placeholder="Username" required>
+                        <input type="password" name="new_password" class="form-control mb-2" placeholder="Password" required>
+                        <select name="department" class="form-select mb-2" required>
+                            <option value="IT">IT</option><option value="MIS">MIS</option>
+                            <option value="QA">QA</option><option value="TL">TL</option><option value="Manager">Manager</option>
+                        </select>
+                        <button type="submit" class="btn btn-dark w-100">Add User</button>
+                    </form>
+                </div>
+
+                <div class="card p-3 shadow-sm">
+                    <h5>User Management</h5>
+                    
+                    <form action="/admin_action" method="POST" class="mb-3 border-bottom pb-3">
+                        <input type="hidden" name="action_type" value="reset_password">
+                        <label class="small text-muted">Reset Password</label>
+                        <select name="target_user" class="form-select mb-2" required>
+                            {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+                        </select>
+                        <input type="password" name="new_password" class="form-control mb-2" placeholder="New Password" required>
+                        <button type="submit" class="btn btn-warning w-100 btn-sm">Force Password Reset</button>
+                    </form>
+
+                    <form action="/admin_action" method="POST">
+                        <input type="hidden" name="action_type" value="mark_leave">
+                        <label class="small text-muted">Mark Leave / Absent</label>
+                        <select name="target_user" class="form-select mb-2" required>
+                            {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+                        </select>
+                        <select name="status" class="form-select mb-2" required>
+                            <option value="Leave">On Leave</option>
+                            <option value="Absent">Absent</option>
+                        </select>
+                        <button type="submit" class="btn btn-danger w-100 btn-sm">Apply Status</button>
+                    </form>
                 </div>
             </div>
 
-            <div class="col-md-6 mb-4">
+            <div class="col-md-7">
                 <div class="card p-4 shadow-sm h-100">
-                    <h4>Add New Support Staff</h4>
-                    <form action="/add_user" method="POST">
-                        <div class="mb-2">
-                            <input type="text" name="new_username" class="form-control" placeholder="New Username" required>
-                        </div>
-                        <div class="mb-2">
-                            <input type="password" name="new_password" class="form-control" placeholder="Temporary Password" required>
-                        </div>
-                        <div class="mb-2">
-                            <select name="department" class="form-control" required>
-                                <option value="IT">IT</option>
-                                <option value="MIS">MIS</option>
-                                <option value="QA">QA</option>
-                                <option value="TL">TL</option>
-                                <option value="Manager">Manager</option>
-                            </select>
-                        </div>
-                        <button type="submit" class="btn btn-dark w-100">Create Account</button>
-                    </form>
+                    <h4>Today's Live Roster</h4>
+                    <p class="text-muted small">Visible to everyone. Shows who is in the office right now.</p>
+                    <table class="table table-sm table-hover border">
+                        <thead class="table-light"><tr><th>Name</th><th>Dept</th><th>Status</th><th>In</th><th>Out</th></tr></thead>
+                        <tbody>
+                            {% for row in roster %}
+                            <tr>
+                                <td>{{ row.username }}</td>
+                                <td>{{ row.department }}</td>
+                                <td>
+                                    {% if row.status == 'Leave' %} <span class="badge bg-primary">On Leave</span>
+                                    {% elif row.status == 'Absent' %} <span class="badge bg-danger">Absent</span>
+                                    {% elif row.clock_in %} <span class="badge bg-success">In Office</span>
+                                    {% else %} <span class="badge bg-secondary">Not Arrived</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ row.clock_in or '-' }}</td>
+                                <td>{{ row.clock_out or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
