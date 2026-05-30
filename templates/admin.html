@@ -1,97 +1,224 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Admin Panel</title>
+    <title>Office Portal | Admin Console</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            padding-bottom: 2rem;
+            background-attachment: fixed;
+        }
+        .glass-card {
+            border-radius: 1.25rem;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .glass-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .navbar-custom {
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .icon-header {
+            color: #203a43;
+            margin-right: 8px;
+        }
+        .table-custom {
+            border-collapse: separate;
+            border-spacing: 0 10px;
+            margin-top: -10px;
+        }
+        .table-custom thead th {
+            border-bottom: none;
+            color: #6c757d;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+            padding-bottom: 0px;
+        }
+        .table-custom tbody tr {
+            background-color: #ffffff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .table-custom tbody tr:hover {
+            transform: scale(1.01);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            z-index: 1;
+            position: relative;
+        }
+        .table-custom tbody td {
+            border: none;
+            padding: 1.2rem 1rem;
+            vertical-align: middle;
+        }
+        .table-custom tbody td:first-child { border-top-left-radius: 0.75rem; border-bottom-left-radius: 0.75rem; }
+        .table-custom tbody td:last-child { border-top-right-radius: 0.75rem; border-bottom-right-radius: 0.75rem; }
+        .form-control, .form-select, .input-group-text {
+            border-radius: 0.75rem;
+            border: 1px solid #dee2e6;
+            padding: 0.6rem 1rem;
+        }
+        .form-control:focus, .form-select:focus {
+            box-shadow: 0 0 0 0.25rem rgba(32, 58, 67, 0.15);
+            border-color: #203a43;
+        }
+        .btn {
+            border-radius: 0.75rem;
+            transition: all 0.2s;
+        }
+        .badge {
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>Management Console (Admin)</h2>
-            <a href="/logout" class="btn btn-danger">Logout</a>
+<body>
+    <nav class="navbar navbar-dark navbar-custom mb-4 py-3">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1 fs-4"><i class="bi bi-buildings"></i> Office Portal</span>
+            <div class="d-flex align-items-center">
+                <span class="text-light me-3"><i class="bi bi-shield-lock"></i> Admin Console</span>
+                <a href="/logout" class="btn btn-danger btn-sm rounded-pill px-3 shadow-sm"><i class="bi bi-box-arrow-right"></i> Logout</a>
+            </div>
         </div>
-        
+    </nav>
+
+    <div class="container">
         {% with messages = get_flashed_messages() %}
-            {% if messages %}{% for msg in messages %}<div class="alert alert-success">{{ msg }}</div>{% endfor %}{% endif %}
+            {% if messages %}
+                {% for msg in messages %}
+                <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+                    <i class="bi bi-check-circle-fill me-2"></i>{{ msg }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endfor %}
+            {% endif %}
         {% endwith %}
 
-        <div class="row">
-            <div class="col-md-5">
-                <div class="card p-3 shadow-sm mb-3">
-                    <h5>Generate Reports</h5>
-                    <a href="/export/weekly" class="btn btn-outline-primary w-100 mb-2">Weekly Report (.xlsx)</a>
-                    <a href="/export/monthly" class="btn btn-outline-success w-100">Monthly Report (.xlsx)</a>
+        <div class="row g-4">
+            <div class="col-lg-4">
+                <div class="card glass-card p-4 mb-4">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-file-earmark-spreadsheet icon-header"></i> Generate Reports</h5>
+                    <div class="d-grid gap-2">
+                        <a href="/export/weekly" class="btn btn-outline-primary"><i class="bi bi-calendar-week"></i> Download Weekly Report</a>
+                        <a href="/export/monthly" class="btn btn-outline-success"><i class="bi bi-calendar-month"></i> Download Monthly Report</a>
+                    </div>
                 </div>
 
-                <div class="card p-3 shadow-sm mb-3">
-                    <h5>Create New Account</h5>
+                <div class="card glass-card p-4 mb-4">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-person-plus icon-header"></i> Create New Account</h5>
                     <form action="/admin_action" method="POST">
                         <input type="hidden" name="action_type" value="add_user">
-                        <input type="text" name="new_username" class="form-control mb-2" placeholder="Username" required>
-                        <input type="password" name="new_password" class="form-control mb-2" placeholder="Password" required>
-                        <select name="department" class="form-select mb-2" required>
-                            <option value="IT">IT</option><option value="MIS">MIS</option>
-                            <option value="QA">QA</option><option value="TL">TL</option><option value="Manager">Manager</option>
-                        </select>
-                        <button type="submit" class="btn btn-dark w-100">Add User</button>
+                        <div class="input-group mb-3">
+                            <span class="input-group-text bg-light"><i class="bi bi-person"></i></span>
+                            <input type="text" name="new_username" class="form-control" placeholder="Username" required>
+                        </div>
+                        <div class="input-group mb-3">
+                            <span class="input-group-text bg-light"><i class="bi bi-key"></i></span>
+                            <input type="password" name="new_password" class="form-control" placeholder="Password" required>
+                        </div>
+                        <div class="input-group mb-3">
+                            <span class="input-group-text bg-light"><i class="bi bi-briefcase"></i></span>
+                            <select name="department" class="form-select" required>
+                                <option value="IT">IT</option><option value="MIS">MIS</option>
+                                <option value="QA">QA</option><option value="TL">TL</option><option value="Manager">Manager</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-dark w-100 fw-bold">Add User</button>
                     </form>
                 </div>
 
-                <div class="card p-3 shadow-sm">
-                    <h5>User Management</h5>
-                    <form action="/admin_action" method="POST" class="mb-3 border-bottom pb-3">
+                <div class="card glass-card p-4">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-sliders icon-header"></i> User Management</h5>
+                    
+                    <form action="/admin_action" method="POST" class="mb-4 pb-4 border-bottom">
                         <input type="hidden" name="action_type" value="reset_password">
-                        <label class="small text-muted">Reset Password</label>
-                        <select name="target_user" class="form-select mb-2" required>
+                        <label class="small text-muted fw-bold mb-1"><i class="bi bi-arrow-counterclockwise"></i> Reset Password</label>
+                        <select name="target_user" class="form-select mb-2 bg-light" required>
+                            <option value="" disabled selected>Select User...</option>
                             {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
                         </select>
                         <input type="password" name="new_password" class="form-control mb-2" placeholder="New Password" required>
-                        <button type="submit" class="btn btn-warning w-100 btn-sm">Force Password Reset</button>
+                        <button type="submit" class="btn btn-warning w-100 fw-bold text-dark"><i class="bi bi-shield-check"></i> Force Reset</button>
                     </form>
 
                     <form action="/admin_action" method="POST">
                         <input type="hidden" name="action_type" value="mark_leave">
-                        <label class="small text-muted">Mark Leave / Absent</label>
-                        <select name="target_user" class="form-select mb-2" required>
+                        <label class="small text-muted fw-bold mb-1"><i class="bi bi-calendar2-x"></i> Mark Leave / Absent</label>
+                        <select name="target_user" class="form-select mb-2 bg-light" required>
+                            <option value="" disabled selected>Select User...</option>
                             {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
                         </select>
-                        <select name="status" class="form-select mb-2" required>
+                        <select name="status" class="form-select mb-3 bg-light" required>
                             <option value="Leave">On Leave</option>
                             <option value="Absent">Absent</option>
                         </select>
-                        <button type="submit" class="btn btn-danger w-100 btn-sm">Apply Status</button>
+                        <button type="submit" class="btn btn-danger w-100 fw-bold"><i class="bi bi-check2-circle"></i> Apply Status</button>
                     </form>
                 </div>
             </div>
 
-            <div class="col-md-7">
-                <div class="card p-4 shadow-sm h-100">
-                    <h4>Today's Live Roster</h4>
-                    <table class="table table-sm table-hover border">
-                        <thead class="table-light"><tr><th>Name</th><th>Dept</th><th>Status</th><th>In</th><th>Out</th></tr></thead>
-                        <tbody>
-                            {% for row in roster %}
-                            <tr>
-                                <td>{{ row.username }}</td>
-                                <td>{{ row.department }}</td>
-                                <td>
-                                    {% if row.status == 'Leave' %} <span class="badge bg-primary">On Leave</span>
-                                    {% elif row.status == 'Absent' %} <span class="badge bg-danger">Absent</span>
-                                    {% elif is_sunday and not row.clock_in %} <span class="badge bg-info text-dark">Sunday Off</span>
-                                    {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark">Shift Ended</span>
-                                    {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success">In Office</span>
-                                    {% else %} <span class="badge bg-secondary">Not Arrived</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ row.clock_in or '-' }}</td>
-                                <td>{{ row.clock_out or '-' }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+            <div class="col-lg-8">
+                <div class="card glass-card p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h4 class="fw-bold m-0"><i class="bi bi-people-fill icon-header"></i> Today's Live Roster</h4>
+                        <span class="badge bg-dark fs-6 shadow-sm"><i class="bi bi-clock"></i> Live Tracker</span>
+                    </div>
+                    
+                    <div class="table-responsive px-2 pb-2">
+                        <table class="table table-custom align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Employee</th>
+                                    <th>Department</th>
+                                    <th>Status</th>
+                                    <th>Clock In</th>
+                                    <th>Clock Out</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in roster %}
+                                <tr>
+                                    <td class="fw-bold">{{ row.username }}</td>
+                                    <td><span class="badge bg-secondary rounded-pill">{{ row.department }}</span></td>
+                                    <td>
+                                        {% if row.status == 'Leave' %} 
+                                            <span class="badge bg-primary px-3 py-2 shadow-sm rounded-pill"><i class="bi bi-calendar-event"></i> On Leave</span>
+                                        {% elif row.status == 'Absent' %} 
+                                            <span class="badge bg-danger px-3 py-2 shadow-sm rounded-pill"><i class="bi bi-person-x"></i> Absent</span>
+                                        {% elif is_sunday and not row.clock_in %} 
+                                            <span class="badge bg-info text-dark px-3 py-2 shadow-sm rounded-pill"><i class="bi bi-cup-hot"></i> Sunday Off</span>
+                                        {% elif row.clock_in and row.clock_out %} 
+                                            <span class="badge bg-dark px-3 py-2 shadow-sm rounded-pill"><i class="bi bi-door-closed"></i> Shift Ended</span>
+                                        {% elif row.clock_in and not row.clock_out %} 
+                                            <span class="badge bg-success px-3 py-2 shadow-sm rounded-pill"><i class="bi bi-pc-display"></i> In Office</span>
+                                        {% else %} 
+                                            <span class="badge bg-light text-secondary border px-3 py-2 rounded-pill"><i class="bi bi-clock-history"></i> Not Arrived</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-muted">{{ row.clock_in or '--:--' }}</td>
+                                    <td class="text-muted">{{ row.clock_out or '--:--' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
