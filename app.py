@@ -26,8 +26,14 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT NOT NULL,
             clock_in TEXT, clock_out TEXT, FOREIGN KEY (user_id) REFERENCES users (id))''')
             
+    # Safely add new columns without dropping data
     try:
         conn.execute("ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
+    except sqlite3.OperationalError:
+        pass 
+        
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN shift TEXT DEFAULT '09:00 AM - 06:00 PM'")
     except sqlite3.OperationalError:
         pass 
     
@@ -35,8 +41,8 @@ def init_db():
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
         hashed_pw = generate_password_hash('admin123')
-        conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)",
-                     ('admin', hashed_pw, 'IT', 'Admin'))
+        conn.execute("INSERT INTO users (username, password, department, role, shift) VALUES (?, ?, ?, ?, ?)",
+                     ('admin', hashed_pw, 'IT', 'Admin', 'Flexible'))
     conn.commit()
     conn.close()
 
@@ -45,7 +51,7 @@ def get_todays_roster():
     today = datetime.now(ist_timezone).strftime('%Y-%m-%d')
     conn = get_db_connection()
     query = '''
-        SELECT u.username, u.department, a.clock_in, a.clock_out, a.status 
+        SELECT u.username, u.department, u.shift, a.clock_in, a.clock_out, a.status 
         FROM users u 
         LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
         WHERE u.role != 'Admin'
@@ -123,13 +129,16 @@ def staff_dashboard():
     if 'user_id' not in session or session['role'] != 'Staff': return redirect(url_for('login'))
     
     ist_timezone = pytz.timezone('Asia/Kolkata')
-    is_sunday = datetime.now(ist_timezone).weekday() == 6 # 6 represents Sunday
+    is_sunday = datetime.now(ist_timezone).weekday() == 6
     
     conn = get_db_connection()
+    user_data = conn.execute('SELECT shift FROM users WHERE id = ?', (session['user_id'],)).fetchone()
+    user_shift = user_data['shift'] if user_data else '09:00 AM - 06:00 PM'
+    
     logs = conn.execute('SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 10', (session['user_id'],)).fetchall()
     conn.close()
     
-    return render_template('staff.html', logs=logs, roster=get_todays_roster(), is_sunday=is_sunday)
+    return render_template('staff.html', logs=logs, roster=get_todays_roster(), is_sunday=is_sunday, user_shift=user_shift)
 
 @app.route('/admin')
 def admin_dashboard():
@@ -139,7 +148,7 @@ def admin_dashboard():
     is_sunday = datetime.now(ist_timezone).weekday() == 6
     
     conn = get_db_connection()
-    users = conn.execute("SELECT username FROM users WHERE role != 'Admin' ORDER BY username").fetchall()
+    users = conn.execute("SELECT username, shift FROM users WHERE role != 'Admin' ORDER BY username").fetchall()
     conn.close()
     
     return render_template('admin.html', users=users, roster=get_todays_roster(), is_sunday=is_sunday)
@@ -156,7 +165,8 @@ def admin_action():
         new_pass = generate_password_hash(request.form['new_password'])
         dept = request.form['department']
         try:
-            conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)", (new_user, new_pass, dept, 'Staff'))
+            conn.execute("INSERT INTO users (username, password, department, role, shift) VALUES (?, ?, ?, ?, ?)", 
+                         (new_user, new_pass, dept, 'Staff', '09:00 AM - 06:00 PM'))
             flash(f"User '{new_user}' created.")
         except sqlite3.IntegrityError:
             flash("Error: Username exists.")
@@ -182,6 +192,12 @@ def admin_action():
                 conn.execute('INSERT INTO attendance (user_id, date, status) VALUES (?, ?, ?)', (user['id'], today, status))
             flash(f"{target} marked as {status} for today.")
 
+    elif action_type == 'change_shift':
+        target = request.form['target_user']
+        new_shift = request.form['new_shift']
+        conn.execute("UPDATE users SET shift = ? WHERE username = ?", (new_shift, target))
+        flash(f"Shift updated for {target} to {new_shift}.")
+
     conn.commit()
     conn.close()
     return redirect(url_for('admin_dashboard'))
@@ -190,7 +206,7 @@ def admin_action():
 def export_excel(report_type):
     if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
     conn = get_db_connection()
-    query = '''SELECT u.username, u.department, a.date, a.clock_in, a.clock_out, a.status 
+    query = '''SELECT u.username, u.department, u.shift, a.date, a.clock_in, a.clock_out, a.status 
                FROM attendance a JOIN users u ON a.user_id = u.id'''
     df = pd.read_sql_query(query, conn)
     conn.close()
