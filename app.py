@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import pytz
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -85,7 +86,6 @@ def login():
         else:
             flash('Invalid credentials. Please try again.')
     return render_template('login.html')
-
 @app.route('/clock', methods=['POST'])
 def clock():
     if 'user_id' not in session:
@@ -93,8 +93,13 @@ def clock():
         
     action = request.form['action']
     user_id = session['user_id']
-    today = datetime.now().strftime('%Y-%m-%d')
-    now_time = datetime.now().strftime('%H:%M:%S')
+    
+    # Get exact local time
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    local_time = datetime.now(ist_timezone)
+    
+    today = local_time.strftime('%Y-%m-%d')
+    now_time = local_time.strftime('%H:%M:%S')
     
     conn = get_db_connection()
     record = conn.execute('SELECT * FROM attendance WHERE user_id = ? AND date = ?', (user_id, today)).fetchone()
@@ -168,6 +173,28 @@ def export_excel(report_type):
     df.to_excel(output_path, index=False)
     
     return send_file(output_path, as_attachment=True)
+
+@app.route('/add_user', methods=['POST'])
+def add_user():
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    new_username = request.form['new_username']
+    new_password = generate_password_hash(request.form['new_password'])
+    department = request.form['department']
+
+    conn = get_db_connection()
+    try:
+        conn.execute("INSERT INTO users (username, password, department, role) VALUES (?, ?, ?, ?)",
+                     (new_username, new_password, department, 'Staff'))
+        conn.commit()
+        flash(f"User '{new_username}' added successfully to {department}!")
+    except sqlite3.IntegrityError:
+        flash("Error: That username already exists.")
+    finally:
+        conn.close()
+
+    return redirect(url_for('admin_dashboard'))
 
 @app.route('/logout')
 def logout():
