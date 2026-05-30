@@ -26,7 +26,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT NOT NULL,
             clock_in TEXT, clock_out TEXT, FOREIGN KEY (user_id) REFERENCES users (id))''')
             
-    # Safely add new columns without dropping data
     try:
         conn.execute("ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
     except sqlite3.OperationalError:
@@ -205,6 +204,10 @@ def admin_action():
 @app.route('/export/<string:report_type>')
 def export_excel(report_type):
     if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
+    
+    # NEW LOGIC: Capture the target user from the dropdown form
+    target_user = request.args.get('target_user', 'All')
+    
     conn = get_db_connection()
     query = '''SELECT u.username, u.department, u.shift, a.date, a.clock_in, a.clock_out, a.status 
                FROM attendance a JOIN users u ON a.user_id = u.id'''
@@ -219,10 +222,19 @@ def export_excel(report_type):
     today = datetime.now()
     if report_type == 'weekly': df = df[df['date'] >= (today - timedelta(days=7))]
     elif report_type == 'monthly': df = df[df['date'] >= (today - timedelta(days=30))]
-        
+    
+    # NEW LOGIC: Filter by the specific user if requested
+    if target_user != 'All':
+        df = df[df['username'] == target_user]
+        if df.empty:
+            flash(f'No data found for {target_user} in this period.')
+            return redirect(url_for('admin_dashboard'))
+            
     df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-    output_path = f"/tmp/{report_type}_attendance.xlsx"
+    filename = f"{report_type}_attendance_{'all_users' if target_user == 'All' else target_user}.xlsx"
+    output_path = f"/tmp/{filename}"
     df.to_excel(output_path, index=False)
+    
     return send_file(output_path, as_attachment=True)
 
 @app.route('/logout')
