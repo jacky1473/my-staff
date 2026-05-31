@@ -88,7 +88,7 @@
                                     <td>
                                         {% if row.status == 'Leave' %} <span class="badge bg-primary">On Leave</span>
                                         {% elif row.status == 'Absent' %} <span class="badge bg-danger">Absent</span>
-                                        {% elif is_sunday and not row.clock_in %} <span class="badge bg-info text-dark">Sunday Off</span>
+                                        {% elif row.weekoff == today_day and not row.clock_in %} <span class="badge bg-info text-dark px-3 py-2">Week Off</span>
                                         {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark border">Shift Ended</span>
                                         {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success shadow-sm">In Office</span>
                                         {% else %} <span class="badge bg-secondary opacity-50">Not Arrived</span>
