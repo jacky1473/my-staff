@@ -71,6 +71,15 @@
                             <option value="IT">IT</option><option value="MIS">MIS</option>
                             <option value="QA">QA</option><option value="TL">TL</option><option value="Manager">Manager</option>
                         </select>
+                        <select name="weekoff" class="form-select mb-3" required>
+                            <option value="Sunday">Sunday Off</option>
+                            <option value="Monday">Monday Off</option>
+                            <option value="Tuesday">Tuesday Off</option>
+                            <option value="Wednesday">Wednesday Off</option>
+                            <option value="Thursday">Thursday Off</option>
+                            <option value="Friday">Friday Off</option>
+                            <option value="Saturday">Saturday Off</option>
+                        </select>
                         <button type="submit" class="btn btn-magical w-100">Create Account</button>
                     </form>
                 </div>
@@ -86,22 +95,27 @@
                         <input type="password" name="new_password" class="form-control mb-2" placeholder="New Password" required>
                         <button type="submit" class="btn btn-warning w-100 btn-sm">Reset</button>
                     </form>
-
                     <form action="/admin_action" method="POST" class="mb-3 border-bottom border-secondary pb-3">
                         <input type="hidden" name="action_type" value="change_shift">
-                        <label class="small text-light opacity-75">Reassign Shift Timing</label>
+                        <label class="small text-light opacity-75">Update Schedule & Weekoff</label>
                         <select name="target_user" class="form-select mb-2" required>
-                            {% for u in users %}<option value="{{ u.username }}">{{ u.username }} ({{ u.shift }})</option>{% endfor %}
+                            {% for u in users %}<option value="{{ u.username }}">{{ u.username }} ({{ u.weekoff }} Off)</option>{% endfor %}
                         </select>
                         <select name="new_shift" class="form-select mb-2" required>
                             <option value="09:00 AM - 06:00 PM">09:00 AM - 06:00 PM</option>
                             <option value="10:00 AM - 07:00 PM">10:00 AM - 07:00 PM</option>
+                            <option value="12:00 PM - 09:00 PM">12:00 PM - 09:00 PM</option>
                             <option value="02:00 PM - 11:00 PM">02:00 PM - 11:00 PM</option>
                             <option value="Night Shift">Night Shift</option>
                         </select>
-                        <button type="submit" class="btn btn-magical w-100 btn-sm">Update Shift</button>
+                        <select name="new_weekoff" class="form-select mb-2" required>
+                            <option value="Sunday">Sunday</option><option value="Monday">Monday</option>
+                            <option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option>
+                            <option value="Thursday">Thursday</option><option value="Friday">Friday</option>
+                            <option value="Saturday">Saturday</option>
+                        </select>
+                        <button type="submit" class="btn btn-magical w-100 btn-sm">Save Schedule</button>
                     </form>
-
                     <form action="/admin_action" method="POST">
                         <input type="hidden" name="action_type" value="mark_leave">
                         <label class="small text-light opacity-75">Force Status Override</label>
@@ -132,7 +146,7 @@
                                     <td>
                                         {% if row.status == 'Leave' %} <span class="badge bg-primary px-3 py-2">On Leave</span>
                                         {% elif row.status == 'Absent' %} <span class="badge bg-danger px-3 py-2">Absent</span>
-                                        {% elif is_sunday and not row.clock_in %} <span class="badge bg-info text-dark px-3 py-2">Sunday Off</span>
+                                        {% elif row.weekoff == today_day and not row.clock_in %} <span class="badge bg-info text-dark px-3 py-2">Week Off</span>
                                         {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark border px-3 py-2">Shift Ended</span>
                                         {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success px-3 py-2 shadow-sm">In Office</span>
                                         {% else %} <span class="badge bg-secondary opacity-50 px-3 py-2">Not Arrived</span>
