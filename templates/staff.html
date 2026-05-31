@@ -33,8 +33,9 @@
     <div class="container mt-5">
         <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
             <div>
-                <h2 class="mb-0">Welcome, <span style="color: #00C9FF;">{{ session['username'] }}</span></h2>
-                <span class="badge bg-dark border text-light mt-2 px-3 py-2">Assigned Shift: {{ user_shift }}</span>
+               <h2 class="mb-0">Welcome, <span style="color: #00C9FF;">{{ session['username'] }}</span></h2>
+                <span class="badge bg-dark border text-light mt-2 px-3 py-2">Shift: {{ user_shift }}</span>
+                <span class="badge bg-secondary border text-light mt-2 px-3 py-2 ms-2">Weekoff: {{ user_weekoff }}</span>
             </div>
             <a href="/logout" class="btn btn-danger shadow">Secure Logout</a>
         </div>
