@@ -39,14 +39,14 @@ def init_db():
     try:
         conn.execute("ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
     except sqlite3.OperationalError:
-        pass
+        pass 
     
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
         hashed_pw = generate_password_hash('admin123')
-        conn.execute("INSERT INTO users (username, password, department, role, shift) VALUES (?, ?, ?, ?, ?)",
-                     ('admin', hashed_pw, 'IT', 'Admin', 'Flexible'))
+        conn.execute("INSERT INTO users (username, password, department, role, shift, weekoff) VALUES (?, ?, ?, ?, ?, ?)",
+                     ('admin', hashed_pw, 'IT', 'Admin', 'Flexible', 'Sunday'))
     conn.commit()
     conn.close()
 
@@ -148,7 +148,8 @@ def staff_dashboard():
 @app.route('/admin')
 def admin_dashboard():
     if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
-        ist_timezone = pytz.timezone('Asia/Kolkata')
+    
+    ist_timezone = pytz.timezone('Asia/Kolkata')
     today_day = datetime.now(ist_timezone).strftime('%A')
     
     conn = get_db_connection()
@@ -182,6 +183,13 @@ def admin_action():
         conn.execute("UPDATE users SET password = ? WHERE username = ?", (new_pass, target))
         flash(f"Password reset for {target}.")
         
+    elif action_type == 'change_shift':
+        target = request.form['target_user']
+        new_shift = request.form['new_shift']
+        new_weekoff = request.form['new_weekoff']
+        conn.execute("UPDATE users SET shift = ?, weekoff = ? WHERE username = ?", (new_shift, new_weekoff, target))
+        flash(f"Schedule updated for {target}: Shift {new_shift}, Weekoff {new_weekoff}.")
+
     elif action_type == 'mark_leave':
         target = request.form['target_user']
         status = request.form['status']
@@ -197,13 +205,6 @@ def admin_action():
                 conn.execute('INSERT INTO attendance (user_id, date, status) VALUES (?, ?, ?)', (user['id'], today, status))
             flash(f"{target} marked as {status} for today.")
 
-    elif action_type == 'change_shift':
-        target = request.form['target_user']
-        new_shift = request.form['new_shift']
-        new_weekoff = request.form['new_weekoff']
-        conn.execute("UPDATE users SET shift = ?, weekoff = ? WHERE username = ?", (new_shift, new_weekoff, target))
-        flash(f"Schedule updated for {target}: Shift {new_shift}, Weekoff {new_weekoff}.")
-
     conn.commit()
     conn.close()
     return redirect(url_for('admin_dashboard'))
@@ -212,11 +213,10 @@ def admin_action():
 def export_excel(report_type):
     if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
     
-    # NEW LOGIC: Capture the target user from the dropdown form
     target_user = request.args.get('target_user', 'All')
     
     conn = get_db_connection()
-    query = '''SELECT u.username, u.department, u.shift, a.date, a.clock_in, a.clock_out, a.status 
+    query = '''SELECT u.username, u.department, u.shift, u.weekoff, a.date, a.clock_in, a.clock_out, a.status 
                FROM attendance a JOIN users u ON a.user_id = u.id'''
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -230,7 +230,6 @@ def export_excel(report_type):
     if report_type == 'weekly': df = df[df['date'] >= (today - timedelta(days=7))]
     elif report_type == 'monthly': df = df[df['date'] >= (today - timedelta(days=30))]
     
-    # NEW LOGIC: Filter by the specific user if requested
     if target_user != 'All':
         df = df[df['username'] == target_user]
         if df.empty:
