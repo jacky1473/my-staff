@@ -35,6 +35,11 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN shift TEXT DEFAULT '09:00 AM - 06:00 PM'")
     except sqlite3.OperationalError:
         pass 
+
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
+    except sqlite3.OperationalError:
+        pass
     
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE username='admin'")
@@ -50,7 +55,7 @@ def get_todays_roster():
     today = datetime.now(ist_timezone).strftime('%Y-%m-%d')
     conn = get_db_connection()
     query = '''
-        SELECT u.username, u.department, u.shift, a.clock_in, a.clock_out, a.status 
+        SELECT u.username, u.department, u.shift, u.weekoff, a.clock_in, a.clock_out, a.status 
         FROM users u 
         LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
         WHERE u.role != 'Admin'
@@ -128,29 +133,29 @@ def staff_dashboard():
     if 'user_id' not in session or session['role'] != 'Staff': return redirect(url_for('login'))
     
     ist_timezone = pytz.timezone('Asia/Kolkata')
-    is_sunday = datetime.now(ist_timezone).weekday() == 6
+    today_day = datetime.now(ist_timezone).strftime('%A')
     
     conn = get_db_connection()
-    user_data = conn.execute('SELECT shift FROM users WHERE id = ?', (session['user_id'],)).fetchone()
+    user_data = conn.execute('SELECT shift, weekoff FROM users WHERE id = ?', (session['user_id'],)).fetchone()
     user_shift = user_data['shift'] if user_data else '09:00 AM - 06:00 PM'
+    user_weekoff = user_data['weekoff'] if user_data else 'Sunday'
     
     logs = conn.execute('SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 10', (session['user_id'],)).fetchall()
     conn.close()
     
-    return render_template('staff.html', logs=logs, roster=get_todays_roster(), is_sunday=is_sunday, user_shift=user_shift)
+    return render_template('staff.html', logs=logs, roster=get_todays_roster(), today_day=today_day, user_shift=user_shift, user_weekoff=user_weekoff)
 
 @app.route('/admin')
 def admin_dashboard():
     if 'user_id' not in session or session['role'] != 'Admin': return redirect(url_for('login'))
-    
-    ist_timezone = pytz.timezone('Asia/Kolkata')
-    is_sunday = datetime.now(ist_timezone).weekday() == 6
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+    today_day = datetime.now(ist_timezone).strftime('%A')
     
     conn = get_db_connection()
-    users = conn.execute("SELECT username, shift FROM users WHERE role != 'Admin' ORDER BY username").fetchall()
+    users = conn.execute("SELECT username, shift, weekoff FROM users WHERE role != 'Admin' ORDER BY username").fetchall()
     conn.close()
     
-    return render_template('admin.html', users=users, roster=get_todays_roster(), is_sunday=is_sunday)
+    return render_template('admin.html', users=users, roster=get_todays_roster(), today_day=today_day)
 
 @app.route('/admin_action', methods=['POST'])
 def admin_action():
@@ -163,10 +168,11 @@ def admin_action():
         new_user = request.form['new_username']
         new_pass = generate_password_hash(request.form['new_password'])
         dept = request.form['department']
+        weekoff = request.form.get('weekoff', 'Sunday')
         try:
-            conn.execute("INSERT INTO users (username, password, department, role, shift) VALUES (?, ?, ?, ?, ?)", 
-                         (new_user, new_pass, dept, 'Staff', '09:00 AM - 06:00 PM'))
-            flash(f"User '{new_user}' created.")
+            conn.execute("INSERT INTO users (username, password, department, role, shift, weekoff) VALUES (?, ?, ?, ?, ?, ?)", 
+                         (new_user, new_pass, dept, 'Staff', '09:00 AM - 06:00 PM', weekoff))
+            flash(f"User '{new_user}' created with {weekoff} off.")
         except sqlite3.IntegrityError:
             flash("Error: Username exists.")
             
@@ -194,8 +200,9 @@ def admin_action():
     elif action_type == 'change_shift':
         target = request.form['target_user']
         new_shift = request.form['new_shift']
-        conn.execute("UPDATE users SET shift = ? WHERE username = ?", (new_shift, target))
-        flash(f"Shift updated for {target} to {new_shift}.")
+        new_weekoff = request.form['new_weekoff']
+        conn.execute("UPDATE users SET shift = ?, weekoff = ? WHERE username = ?", (new_shift, new_weekoff, target))
+        flash(f"Schedule updated for {target}: Shift {new_shift}, Weekoff {new_weekoff}.")
 
     conn.commit()
     conn.close()
