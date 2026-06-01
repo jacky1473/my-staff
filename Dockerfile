@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Persistent data directory for the SQLite Database file
 RUN mkdir /data
 
 EXPOSE 5000
