@@ -1,7 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Staff Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ company_name }} | Staff Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
@@ -12,98 +14,146 @@
             color: #fff;
             min-height: 100vh;
         }
-        @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        @keyframes gradientBG {
+            0%   { background-position: 0% 50%; }
+            50%  { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
         .glass-card {
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(255,255,255,0.08);
             backdrop-filter: blur(15px);
             -webkit-backdrop-filter: blur(15px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255,255,255,0.1);
             border-radius: 1rem;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         }
         .table-glass { color: #fff; }
         .table-glass th, .table-glass td { border-color: rgba(255,255,255,0.1); background: transparent !important; color: #fff !important; }
         .table-glass thead th { background: rgba(0,0,0,0.3) !important; color: #00C9FF !important; border-bottom: 2px solid #00C9FF; }
-        .btn-magical-in { background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%); border: none; color: #fff; font-weight: bold; }
-        .btn-magical-out { background: linear-gradient(90deg, #f12711 0%, #f5af19 100%); border: none; color: #fff; font-weight: bold; }
-        .btn-magical-in:hover, .btn-magical-out:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(255,255,255, 0.2); color: #fff; }
+        .btn-in  { background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%); border: none; color: #fff; font-weight: bold; }
+        .btn-out { background: linear-gradient(90deg, #f12711 0%, #f5af19 100%); border: none; color: #fff; font-weight: bold; }
+        .btn-in:hover, .btn-out:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(255,255,255,0.2); color: #fff; }
     </style>
 </head>
 <body>
-    <div class="container mt-5">
-        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-            <div>
-                <h2 class="mb-0">Welcome to {{ company_name }}, <span style="color: #00C9FF;">{{ session['username'] }}</span></h2>
-                <span class="badge bg-dark border text-light mt-2 px-3 py-2">Shift: {{ user_shift }}</span>
-                <span class="badge bg-secondary border text-light mt-2 px-3 py-2 ms-2">Weekoff: {{ user_weekoff }}</span>
-            </div>
-            <a href="/logout" class="btn btn-danger shadow">Secure Logout</a>
-        </div>
-        
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}{% for msg in messages %}<div class="alert alert-info bg-info text-dark border-0 fw-bold">{{ msg }}</div>{% endfor %}{% endif %}
-        {% endwith %}
+<div class="container mt-5 pb-5">
 
-        <div class="row">
-            <div class="col-md-5 mb-4">
-                <div class="card p-4 text-center glass-card mb-4">
-                    <h4 class="text-info mb-4">Shift Action</h4>
-                    <form action="/clock" method="POST">
-                        <button type="submit" name="action" value="in" class="btn btn-magical-in btn-lg w-100 mb-3 shadow">Clock IN</button>
-                        <button type="submit" name="action" value="out" class="btn btn-magical-out btn-lg w-100 shadow">Clock OUT</button>
-                    </form>
-                </div>
-                
-                <div class="card p-4 glass-card">
-                    <h5 class="text-info mb-3">Your Personal Logs</h5>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-glass align-middle">
-                            <thead><tr><th>Date</th><th>In</th><th>Out</th></tr></thead>
-                            <tbody>
-                                {% for log in logs %}
-                                <tr>
-                                    <td>{{ log.date }}</td>
-                                    <td class="text-success fw-bold">{{ log.clock_in or '-' }}</td>
-                                    <td class="text-warning fw-bold">{{ log.clock_out or '-' }}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-7 mb-4">
-                <div class="card p-4 glass-card h-100">
-                    <h4 class="text-info">Team Network Presence</h4>
-                    <p class="text-light opacity-75 small">See who is currently active in the office.</p>
-                    <div class="table-responsive mt-2">
-                        <table class="table table-sm table-hover table-glass align-middle">
-                            <thead><tr><th>Name</th><th>Dept</th><th>Shift</th><th>Status</th><th>Time In</th></tr></thead>
-                            <tbody>
-                                {% for row in roster %}
-                                <tr>
-                                    <td class="fw-bold">{{ row.username }}</td>
-                                    <td>{{ row.department }}</td>
-                                    <td><span class="badge bg-secondary opacity-75">{{ row.shift }}</span></td>
-                                    <td>
-                                        {% if row.status == 'Leave' %} <span class="badge bg-primary">On Leave</span>
-                                        {% elif row.status == 'Absent' %} <span class="badge bg-danger">Absent</span>
-                                        {% elif row.weekoff == today_day and not row.clock_in %} <span class="badge bg-info text-dark">Week Off</span>
-                                        {% elif row.clock_in and row.clock_out %} <span class="badge bg-dark border">Shift Ended</span>
-                                        {% elif row.clock_in and not row.clock_out %} <span class="badge bg-success shadow-sm">In Office</span>
-                                        {% else %} <span class="badge bg-secondary opacity-50">Not Arrived</span>
-                                        {% endif %}
-                                    </td>
-                                    <td class="text-success fw-bold">{{ row.clock_in or '-' }}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
+        <div>
+            <h4 class="mb-1">
+                Welcome, <span style="color:#00C9FF;">{{ session['username'] }}</span>
+                <span class="fw-light text-muted fs-6"> @ {{ company_name }}</span>
+            </h4>
+            <span class="badge bg-dark border text-light px-3 py-2">🕐 {{ user_shift }}</span>
+            <span class="badge bg-secondary border text-light px-3 py-2 ms-2">📅 {{ user_weekoff }} Off</span>
         </div>
+        <a href="/logout" class="btn btn-danger shadow">Logout</a>
     </div>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for msg in messages %}
+                <div class="alert alert-info bg-info text-dark border-0 fw-bold mb-3">{{ msg }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="row g-4">
+
+        <!-- Clock In/Out + Personal Logs -->
+        <div class="col-md-5">
+            <div class="card p-4 text-center glass-card mb-4">
+                <h5 class="text-info mb-4">⏱ Shift Clock</h5>
+                <form action="/clock" method="POST">
+                    <button type="submit" name="action" value="in"
+                            class="btn btn-in btn-lg w-100 mb-3 shadow">
+                        ✅ Clock IN
+                    </button>
+                    <button type="submit" name="action" value="out"
+                            class="btn btn-out btn-lg w-100 shadow">
+                        🚪 Clock OUT
+                    </button>
+                </form>
+            </div>
+
+            <div class="card p-4 glass-card">
+                <h6 class="text-info mb-3">📋 Your Recent Logs</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-glass align-middle mb-0">
+                        <thead>
+                            <tr><th>Date</th><th>In</th><th>Out</th><th>Status</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for log in logs %}
+                            <tr>
+                                <td>{{ log.date }}</td>
+                                <td class="text-success fw-bold">{{ log.clock_in or '—' }}</td>
+                                <td class="text-warning fw-bold">{{ log.clock_out or '—' }}</td>
+                                <td>
+                                    {% if log.status == 'Leave' %}
+                                        <span class="badge bg-primary">Leave</span>
+                                    {% elif log.status == 'Absent' %}
+                                        <span class="badge bg-danger">Absent</span>
+                                    {% elif log.clock_in %}
+                                        <span class="badge bg-success">Present</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-center opacity-50">No records yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Team Roster -->
+        <div class="col-md-7">
+            <div class="card p-4 glass-card h-100">
+                <h5 class="text-info mb-1">🏢 Team Presence</h5>
+                <p class="text-light opacity-50 small mb-3">Live view — who is in the office right now.</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover table-glass align-middle mb-0">
+                        <thead>
+                            <tr><th>Name</th><th>Dept</th><th>Shift</th><th>Status</th><th>In</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for row in roster %}
+                            <tr>
+                                <td class="fw-bold">{{ row.username }}</td>
+                                <td>{{ row.department }}</td>
+                                <td><span class="badge bg-secondary opacity-75">{{ row.shift }}</span></td>
+                                <td>
+                                    {% if row.status == 'Leave' %}
+                                        <span class="badge bg-primary">On Leave</span>
+                                    {% elif row.status == 'Absent' %}
+                                        <span class="badge bg-danger">Absent</span>
+                                    {% elif row.weekoff == today_day and not row.clock_in %}
+                                        <span class="badge bg-info text-dark">Week Off</span>
+                                    {% elif row.clock_in and row.clock_out %}
+                                        <span class="badge bg-dark border">Shift Ended</span>
+                                    {% elif row.clock_in and not row.clock_out %}
+                                        <span class="badge bg-success">In Office</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary opacity-50">Not Arrived</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-success fw-bold">{{ row.clock_in or '—' }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="5" class="text-center opacity-50">No staff found.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
 </body>
 </html>
