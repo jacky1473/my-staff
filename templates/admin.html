@@ -1,302 +1,286 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ company_name }} | Admin</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(-45deg, #0f2027, #203a43, #2c5364, #141e30, #243b55);
-            background-size: 400% 400%;
-            animation: gradientBG 15s ease infinite;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: #fff;
-            min-height: 100vh;
-        }
-        @keyframes gradientBG { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-        .glass-card {
-            background: rgba(255,255,255,0.07);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 1rem;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        }
-        .stat-card {
-            background: rgba(255,255,255,0.07);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: .75rem;
-            padding: 1rem 1.25rem;
-            text-align: center;
-        }
-        .stat-card .stat-num { font-size: 2rem; font-weight: 700; }
-        .form-control, .form-select { background: rgba(255,255,255,0.92); border: none; color: #111; }
-        .table-glass { color: #fff; }
-        .table-glass th, .table-glass td { border-color: rgba(255,255,255,0.08); background: transparent !important; color: #fff !important; }
-        .table-glass thead th { background: rgba(0,0,0,0.3) !important; color: #00C9FF !important; border-bottom: 2px solid #00C9FF; }
-        .btn-magical { background: linear-gradient(90deg,#00C9FF,#92FE9D); border: none; color: #000; font-weight: bold; }
-        .btn-magical:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,201,255,0.4); color:#000; }
-        .section-label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; opacity: .6; }
-        .nav-tabs .nav-link { color: rgba(255,255,255,0.6); border: none; border-bottom: 2px solid transparent; }
-        .nav-tabs .nav-link.active { color: #00C9FF; border-bottom: 2px solid #00C9FF; background: transparent; }
-        .nav-tabs { border-bottom: 1px solid rgba(255,255,255,0.15); }
-        .badge-urgent  { background: #ff4444; }
-        .badge-high    { background: #ff9800; }
-        .badge-normal  { background: #607d8b; }
-        .ann-card { background: rgba(0,0,0,0.25); border-radius: .5rem; padding: .75rem 1rem; margin-bottom: .5rem; border-left: 3px solid #607d8b; }
-        .ann-card.high   { border-left-color: #ff9800; }
-        .ann-card.urgent { border-left-color: #ff4444; }
-    </style>
-</head>
-<body>
-<div class="container-fluid mt-4 px-4 pb-5">
+{% extends "base.html" %}
 
-    <!-- Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-        <div>
-            <h4 class="mb-0"><span style="color:#00C9FF">{{ company_name }}</span> — Admin Dashboard</h4>
-            <small class="text-muted opacity-75">{{ today_day }}, logged in as <strong>{{ session['username'] }}</strong></small>
-        </div>
-        <div class="d-flex gap-2">
-            <a href="/admin/analytics" class="btn btn-outline-info btn-sm">📊 Analytics</a>
-            <a href="/logout" class="btn btn-danger btn-sm">Logout</a>
-        </div>
+{% block title %}Admin Dashboard — {{ company_name }}{% endblock %}
+
+{% block head %}
+<style>
+  .admin-container { max-width: 1600px; margin: 0 auto; padding: 1.25rem; }
+  @media (max-width: 767px) {
+    .admin-container { padding: 1rem 0.75rem; }
+    .admin-cols { flex-direction: column; }
+  }
+  @media (min-width: 768px) {
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="admin-container">
+
+  <!-- Page Header -->
+  <div class="page-header">
+    <div>
+      <div class="page-title">👨‍💼 Admin Dashboard</div>
+      <p class="page-subtitle">{{ today_day }} • {{ company_name }}</p>
     </div>
-
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}{% for msg in messages %}
-            <div class="alert alert-success bg-success text-white border-0 py-2 mb-3">{{ msg }}</div>
-        {% endfor %}{% endif %}
-    {% endwith %}
-
-    <!-- Stats Row -->
-    <div class="row g-3 mb-4">
-        <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-num text-info">{{ stats.total }}</div><div class="small opacity-75">Total Staff</div></div></div>
-        <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-num text-success">{{ stats.in_office }}</div><div class="small opacity-75">In Office</div></div></div>
-        <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-num text-warning">{{ stats.present }}</div><div class="small opacity-75">Clocked In</div></div></div>
-        <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-num text-primary">{{ stats.on_leave }}</div><div class="small opacity-75">On Leave</div></div></div>
-        <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-num text-danger">{{ stats.absent }}</div><div class="small opacity-75">Absent</div></div></div>
-        <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-num text-secondary">{{ stats.not_arrived }}</div><div class="small opacity-75">Not Arrived</div></div></div>
+    <div class="d-flex gap-2" style="flex-wrap: wrap; align-items: center;">
+      <a href="/admin/analytics" class="btn btn-secondary-glow btn-sm">📊 Analytics</a>
+      <button id="theme-toggle" class="theme-toggle"></button>
+      <a href="/logout" class="btn btn-danger-glow" style="padding: 0.65rem 1.25rem;">Logout</a>
     </div>
+  </div>
 
-    <div class="row g-4">
-        <!-- Left Sidebar -->
-        <div class="col-lg-3 col-md-4">
+  <!-- Stats Cards -->
+  <div class="stat-grid mb-4">
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.total }}</div>
+      <div class="stat-label">Total Staff</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" style="background: linear-gradient(135deg, #10b981, #059669); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.in_office }}</div>
+      <div class="stat-label">In Office</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" style="background: linear-gradient(135deg, #f59e0b, #d97706); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.present }}</div>
+      <div class="stat-label">Clocked In</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" style="background: linear-gradient(135deg, #06b6d4, #0891b2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.on_leave }}</div>
+      <div class="stat-label">On Leave</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" style="background: linear-gradient(135deg, #ef4444, #dc2626); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.absent }}</div>
+      <div class="stat-label">Absent</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.not_arrived }}</div>
+      <div class="stat-label">Not Arrived</div>
+    </div>
+  </div>
 
-            <!-- Tabs for sidebar panels -->
-            <ul class="nav nav-tabs mb-3" id="sidebarTabs">
-                <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabStaff">👥 Staff</button></li>
-                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabNotice">📢 Notice</button></li>
-                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabSettings">⚙️ Settings</button></li>
-            </ul>
+  <!-- Alerts -->
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      {% for msg in messages %}
+        <div class="flash-alert alert alert-success" role="alert">{{ msg }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
 
-            <div class="tab-content">
+  <!-- Main Content -->
+  <div class="row g-3">
+    <!-- Sidebar -->
+    <div class="col-lg-3 col-md-4">
+      <div class="portal-tabs">
+        <button class="portal-tab active" data-target="staff-tab">👥 Staff</button>
+        <button class="portal-tab" data-target="notice-tab">📢 Notice</button>
+        <button class="portal-tab" data-target="settings-tab">⚙️ Settings</button>
+      </div>
 
-                <!-- Staff Management Tab -->
-                <div class="tab-pane fade show active" id="tabStaff">
+      <!-- STAFF TAB -->
+      <div id="staff-tab" class="portal-pane">
+        <!-- Export -->
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-3">📊 Export Reports</h6>
+          <form action="/export/weekly" method="GET" class="mb-2">
+            <label class="section-label">Weekly Report</label>
+            <select name="target_user" class="form-select form-select-sm mb-2">
+              <option value="All">All Employees</option>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">⬇ Weekly</button>
+          </form>
+          <form action="/export/monthly" method="GET">
+            <label class="section-label">Monthly Report</label>
+            <select name="target_user" class="form-select form-select-sm mb-2">
+              <option value="All">All Employees</option>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">⬇ Monthly</button>
+          </form>
+        </div>
 
-                    <!-- Export -->
-                    <div class="card p-3 glass-card mb-3">
-                        <h6 class="text-info mb-3">📊 Export Reports</h6>
-                        <form action="/export/weekly" method="GET" class="mb-2 pb-2 border-bottom border-secondary">
-                            <label class="section-label text-light d-block mb-1">Weekly</label>
-                            <select name="target_user" class="form-select form-select-sm mb-2">
-                                <option value="All">All Employees</option>
-                                {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-outline-info w-100 btn-sm">⬇ Weekly Excel</button>
-                        </form>
-                        <form action="/export/monthly" method="GET">
-                            <label class="section-label text-light d-block mb-1">Monthly</label>
-                            <select name="target_user" class="form-select form-select-sm mb-2">
-                                <option value="All">All Employees</option>
-                                {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-outline-success w-100 btn-sm">⬇ Monthly Excel</button>
-                        </form>
-                    </div>
+        <!-- Add Employee -->
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-3">➕ Add Employee</h6>
+          <form action="/admin_action" method="POST" novalidate>
+            <input type="hidden" name="action_type" value="add_user">
+            <input type="text" name="new_username" class="form-control mb-2" placeholder="Username" required>
+            <input type="password" name="new_password" class="form-control mb-2" placeholder="Password" required minlength="6">
+            <select name="department" class="form-select mb-2" required>
+              {% for d in departments %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+            </select>
+            <select name="weekoff" class="form-select mb-3" required>
+              {% for d in weekday_options %}<option value="{{ d }}">{{ d }} Off</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Create</button>
+          </form>
+        </div>
 
-                    <!-- Add Employee -->
-                    <div class="card p-3 glass-card mb-3">
-                        <h6 class="text-info mb-3">➕ Add Employee</h6>
-                        <form action="/admin_action" method="POST">
-                            <input type="hidden" name="action_type" value="add_user">
-                            <input type="text" name="new_username" class="form-control form-control-sm mb-2" placeholder="Username" required>
-                            <input type="password" name="new_password" class="form-control form-control-sm mb-2" placeholder="Password (min 6)" required minlength="6">
-                            <select name="department" class="form-select form-select-sm mb-2" required>
-                                {% for d in departments %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
-                            </select>
-                            <select name="weekoff" class="form-select form-select-sm mb-3" required>
-                                {% for d in weekday_options %}<option value="{{ d }}">{{ d }} Off</option>{% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-magical w-100 btn-sm">Create Account</button>
-                        </form>
-                    </div>
+        <!-- Account Controls -->
+        <div class="elevated-card p-3">
+          <h6 class="page-subtitle mb-3">🔧 Controls</h6>
 
-                    <!-- Account Controls -->
-                    <div class="card p-3 glass-card mb-3">
-                        <h6 class="text-info mb-3">🔧 Account Controls</h6>
+          <!-- Reset Password -->
+          <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
+            <input type="hidden" name="action_type" value="reset_password">
+            <label class="section-label">Reset Password</label>
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <input type="password" name="new_password" class="form-control form-control-sm mb-2" placeholder="New password" required minlength="6">
+            <button type="submit" class="btn btn-warning w-100 btn-sm">Reset</button>
+          </form>
 
-                        <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
-                            <input type="hidden" name="action_type" value="reset_password">
-                            <label class="section-label text-light d-block mb-1">Reset Password</label>
-                            <select name="target_user" class="form-select form-select-sm mb-2" required>
-                                {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
-                            </select>
-                            <input type="password" name="new_password" class="form-control form-control-sm mb-2" placeholder="New Password" required minlength="6">
-                            <button type="submit" class="btn btn-warning w-100 btn-sm">Reset</button>
-                        </form>
+          <!-- Schedule -->
+          <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
+            <input type="hidden" name="action_type" value="change_shift">
+            <label class="section-label">Update Schedule</label>
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <select name="new_shift" class="form-select form-select-sm mb-2" required>
+              {% for s in shift_options %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+            <select name="new_weekoff" class="form-select form-select-sm mb-2" required>
+              {% for d in weekday_options %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Update</button>
+          </form>
 
-                        <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
-                            <input type="hidden" name="action_type" value="change_shift">
-                            <label class="section-label text-light d-block mb-1">Update Schedule</label>
-                            <select name="target_user" class="form-select form-select-sm mb-2" required>
-                                {% for u in users %}<option value="{{ u.username }}">{{ u.username }} ({{ u.weekoff }} off)</option>{% endfor %}
-                            </select>
-                            <select name="new_shift" class="form-select form-select-sm mb-2" required>
-                                {% for s in shift_options %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
-                            </select>
-                            <select name="new_weekoff" class="form-select form-select-sm mb-2" required>
-                                {% for d in weekday_options %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-magical w-100 btn-sm">Save Schedule</button>
-                        </form>
+          <!-- Mark Leave -->
+          <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
+            <input type="hidden" name="action_type" value="mark_leave">
+            <label class="section-label">Mark Status</label>
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <select name="status" class="form-select form-select-sm mb-2" required>
+              <option value="Leave">On Leave</option>
+              <option value="Absent">Absent</option>
+            </select>
+            <button type="submit" class="btn btn-warning w-100 btn-sm">Apply</button>
+          </form>
 
-                        <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
-                            <input type="hidden" name="action_type" value="mark_leave">
-                            <label class="section-label text-light d-block mb-1">Force Status Today</label>
-                            <select name="target_user" class="form-select form-select-sm mb-2" required>
-                                {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
-                            </select>
-                            <select name="status" class="form-select form-select-sm mb-2" required>
-                                <option value="Leave">On Leave</option>
-                                <option value="Absent">Absent</option>
-                            </select>
-                            <button type="submit" class="btn btn-danger w-100 btn-sm">Apply Status</button>
-                        </form>
+          <!-- Delete User -->
+          <form action="/admin_action" method="POST" data-confirm="⚠️ Delete employee and ALL records permanently?">
+            <input type="hidden" name="action_type" value="delete_user">
+            <label class="section-label">Delete Employee</label>
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-danger-glow w-100 btn-sm">🗑 Delete</button>
+          </form>
+        </div>
+      </div>
 
-                        <form action="/admin_action" method="POST"
-                              onsubmit="return confirm('Delete this employee and ALL their records permanently?');">
-                            <input type="hidden" name="action_type" value="delete_user">
-                            <label class="section-label text-light d-block mb-1">Delete Employee</label>
-                            <select name="target_user" class="form-select form-select-sm mb-2" required>
-                                {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-outline-danger w-100 btn-sm">🗑 Delete Permanently</button>
-                        </form>
-                    </div>
-                </div>
+      <!-- NOTICE TAB -->
+      <div id="notice-tab" class="portal-pane" style="display: none;">
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-3">📢 Post Announcement</h6>
+          <form action="/admin_action" method="POST" novalidate>
+            <input type="hidden" name="action_type" value="post_announcement">
+            <input type="text" name="ann_title" class="form-control mb-2" placeholder="Title" required maxlength="100">
+            <textarea name="ann_body" class="form-control mb-2" placeholder="Message..." required maxlength="500" rows="3"></textarea>
+            <select name="ann_priority" class="form-select mb-3">
+              <option value="normal">🔵 Normal</option>
+              <option value="high">🟠 High</option>
+              <option value="urgent">🔴 Urgent</option>
+            </select>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Post</button>
+          </form>
+        </div>
 
-                <!-- Notice Board Tab -->
-                <div class="tab-pane fade" id="tabNotice">
-                    <div class="card p-3 glass-card mb-3">
-                        <h6 class="text-info mb-3">📢 Post Announcement</h6>
-                        <form action="/admin_action" method="POST">
-                            <input type="hidden" name="action_type" value="post_announcement">
-                            <input type="text" name="ann_title" class="form-control form-control-sm mb-2" placeholder="Title" required maxlength="100">
-                            <textarea name="ann_body" class="form-control form-control-sm mb-2" rows="3" placeholder="Message to all staff..." required maxlength="500"></textarea>
-                            <select name="ann_priority" class="form-select form-select-sm mb-3">
-                                <option value="normal">🔵 Normal</option>
-                                <option value="high">🟠 High Priority</option>
-                                <option value="urgent">🔴 Urgent</option>
-                            </select>
-                            <button type="submit" class="btn btn-magical w-100 btn-sm">📤 Post to All Staff</button>
-                        </form>
-                    </div>
-
-                    <div class="card p-3 glass-card">
-                        <h6 class="text-info mb-3">📋 Active Announcements</h6>
-                        {% if announcements %}
-                            {% for ann in announcements %}
-                            <div class="ann-card {{ ann.priority }}">
-                                <div class="d-flex justify-content-between align-items-start">
-                                    <div>
-                                        <span class="badge badge-{{ ann.priority }} small">{{ ann.priority.upper() }}</span>
-                                        <strong class="d-block mt-1">{{ ann.title }}</strong>
-                                        <small class="opacity-75">{{ ann.body }}</small><br>
-                                        <small class="text-muted">By {{ ann.created_by }} • {{ ann.created_at[:16] }}</small>
-                                    </div>
-                                    {% if ann.active %}
-                                    <form action="/admin_action" method="POST" class="ms-2">
-                                        <input type="hidden" name="action_type" value="delete_announcement">
-                                        <input type="hidden" name="ann_id" value="{{ ann.id }}">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger px-2 py-0"
-                                                onclick="return confirm('Remove this announcement?')">✕</button>
-                                    </form>
-                                    {% endif %}
-                                </div>
-                            </div>
-                            {% endfor %}
-                        {% else %}
-                            <p class="text-muted small opacity-75 mb-0">No announcements yet.</p>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <!-- Settings Tab -->
-                <div class="tab-pane fade" id="tabSettings">
-                    <div class="card p-3 glass-card mb-3">
-                        <h6 class="text-info mb-3">🏢 Company Settings</h6>
-                        <form action="/admin_action" method="POST">
-                            <input type="hidden" name="action_type" value="update_company">
-                            <label class="section-label text-light d-block mb-1">Company Name</label>
-                            <input type="text" name="company_name" class="form-control form-control-sm mb-3"
-                                   value="{{ company_name }}" required>
-                            <button type="submit" class="btn btn-magical w-100 btn-sm">Save Name</button>
-                        </form>
-                    </div>
-                    <div class="card p-3 glass-card">
-                        <h6 class="text-info mb-2">🔗 Quick Links</h6>
-                        <a href="/api/status" target="_blank" class="btn btn-outline-light w-100 btn-sm mb-2">API Health Check</a>
-                        <a href="/admin/analytics" class="btn btn-outline-info w-100 btn-sm">30-Day Analytics</a>
-                    </div>
-                </div>
-
+        <div class="elevated-card p-3">
+          <h6 class="page-subtitle mb-2">Active Announcements</h6>
+          {% if announcements %}
+            {% for ann in announcements %}
+            <div class="announcement-banner {{ ann.priority }} mb-2">
+              <div class="announcement-title">{{ ann.title }}</div>
+              <div class="announcement-body">{{ ann.body }}</div>
+              <div class="announcement-meta">{{ ann.created_by }} • {{ ann.created_at[:10] }}</div>
+              {% if ann.active %}
+              <form action="/admin_action" method="POST" style="margin-top: 0.5rem;">
+                <input type="hidden" name="action_type" value="delete_announcement">
+                <input type="hidden" name="ann_id" value="{{ ann.id }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+              </form>
+              {% endif %}
             </div>
+            {% endfor %}
+          {% else %}
+            <p class="text-muted small">No announcements.</p>
+          {% endif %}
         </div>
+      </div>
 
-        <!-- Right: Roster -->
-        <div class="col-lg-9 col-md-8">
-            <div class="card p-4 glass-card">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <h5 class="text-info mb-0">🟢 Live Presence Monitor</h5>
-                    <span class="badge bg-dark border opacity-75">{{ today_day }}</span>
-                </div>
-                <p class="text-light opacity-50 small mb-3">Real-time shift &amp; attendance status for all staff.</p>
-                <div class="table-responsive">
-                    <table class="table table-hover table-glass align-middle mb-0">
-                        <thead>
-                            <tr><th>Name</th><th>Dept</th><th>Shift</th><th>Status</th><th>Clock In</th><th>Clock Out</th></tr>
-                        </thead>
-                        <tbody>
-                            {% for row in roster %}
-                            <tr>
-                                <td class="fw-bold">{{ row.username }}</td>
-                                <td><span class="badge bg-secondary opacity-75">{{ row.department }}</span></td>
-                                <td><small class="opacity-75">{{ row.shift }}</small></td>
-                                <td>
-                                    {% if row.status == 'Leave' %}<span class="badge bg-primary px-3 py-2">On Leave</span>
-                                    {% elif row.status == 'Absent' %}<span class="badge bg-danger px-3 py-2">Absent</span>
-                                    {% elif row.weekoff == today_day and not row.clock_in %}<span class="badge bg-info text-dark px-3 py-2">Week Off</span>
-                                    {% elif row.clock_in and row.clock_out %}<span class="badge bg-dark border px-3 py-2">Shift Ended</span>
-                                    {% elif row.clock_in and not row.clock_out %}<span class="badge bg-success px-3 py-2">In Office</span>
-                                    {% else %}<span class="badge bg-secondary opacity-50 px-3 py-2">Not Arrived</span>
-                                    {% endif %}
-                                </td>
-                                <td class="text-success fw-bold">{{ row.clock_in or '—' }}</td>
-                                <td class="text-warning fw-bold">{{ row.clock_out or '—' }}</td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="6" class="text-center opacity-50 py-4">No staff found.</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+      <!-- SETTINGS TAB -->
+      <div id="settings-tab" class="portal-pane" style="display: none;">
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-3">🏢 Company Name</h6>
+          <form action="/admin_action" method="POST">
+            <input type="hidden" name="action_type" value="update_company">
+            <input type="text" name="company_name" class="form-control mb-3" value="{{ company_name }}" required>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Save</button>
+          </form>
         </div>
+        <div class="elevated-card p-3">
+          <h6 class="page-subtitle mb-2">🔗 Tools</h6>
+          <a href="/api/status" target="_blank" class="btn btn-secondary-glow w-100 btn-sm mb-2">API Status</a>
+          <a href="/admin/analytics" class="btn btn-secondary-glow w-100 btn-sm">Analytics</a>
+        </div>
+      </div>
     </div>
+
+    <!-- Roster Table -->
+    <div class="col-lg-9 col-md-8">
+      <div class="elevated-card p-4">
+        <h5 class="page-subtitle mb-1">🟢 Live Presence Monitor</h5>
+        <p style="color: var(--text-muted); margin: 0; font-size: 0.85rem;">Real-time attendance status</p>
+        <div class="table-responsive mt-3">
+          <table class="table-premium">
+            <thead>
+              <tr><th>Name</th><th>Dept</th><th class="d-none d-lg-table-cell">Shift</th><th>Status</th><th>In</th><th>Out</th></tr>
+            </thead>
+            <tbody>
+              {% for row in roster %}
+              <tr>
+                <td class="fw-bold">{{ row.username }}</td>
+                <td><span class="badge bg-secondary">{{ row.department }}</span></td>
+                <td class="d-none d-lg-table-cell" style="font-size: 0.85rem;">{{ row.shift }}</td>
+                <td>
+                  {% if row.status == 'Leave' %}<span class="badge badge-status status-away">Leave</span>
+                  {% elif row.status == 'Absent' %}<span class="badge badge-status status-absent">Absent</span>
+                  {% elif row.weekoff == today_day and not row.clock_in %}<span class="badge bg-secondary">Week Off</span>
+                  {% elif row.clock_in and row.clock_out %}<span class="badge bg-secondary">Shift Ended</span>
+                  {% elif row.clock_in and not row.clock_out %}<span class="badge badge-status status-online">In Office</span>
+                  {% else %}<span class="badge bg-secondary opacity-50">Not Arrived</span>
+                  {% endif %}
+                </td>
+                <td class="text-success fw-bold">{{ row.clock_in or '—' }}</td>
+                <td class="text-warning fw-bold">{{ row.clock_out or '—' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="6" class="text-center text-muted py-4">No staff found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    initSidebarTabs();
+    initAlertToasts();
+    initConfirmActions();
+  });
+</script>
+{% endblock %}

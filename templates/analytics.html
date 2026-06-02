@@ -1,110 +1,80 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ company_name }} | Analytics</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(-45deg, #0f2027, #203a43, #2c5364, #141e30, #243b55);
-            background-size: 400% 400%;
-            animation: gradientBG 15s ease infinite;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: #fff; min-height: 100vh;
-        }
-        @keyframes gradientBG { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-        .glass-card {
-            background: rgba(255,255,255,0.07);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 1rem;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        }
-        .table-glass { color: #fff; }
-        .table-glass th, .table-glass td { border-color: rgba(255,255,255,0.08); background: transparent !important; color: #fff !important; }
-        .table-glass thead th { background: rgba(0,0,0,0.3) !important; color: #00C9FF !important; border-bottom: 2px solid #00C9FF; }
-        .bar-wrap { background: rgba(255,255,255,0.1); border-radius: 4px; height: 8px; overflow: hidden; }
-        .bar-fill  { height: 100%; border-radius: 4px; background: linear-gradient(90deg,#00C9FF,#92FE9D); transition: width .4s ease; }
-    </style>
-</head>
-<body>
-<div class="container-fluid mt-4 px-4 pb-5">
+{% extends "base.html" %}
 
-    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-        <div>
-            <h4 class="mb-0"><span style="color:#00C9FF">{{ company_name }}</span> — 30-Day Analytics</h4>
-            <small class="text-muted opacity-75">Attendance trends for the last 30 days</small>
+{% block title %}Analytics — {{ company_name }}{% endblock %}
+
+{% block body %}
+<div style="max-width: 1400px; margin: 0 auto; padding: 1.25rem;">
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">📊 30-Day Analytics</div>
+      <p class="page-subtitle">Attendance trends and insights</p>
+    </div>
+    <a href="/admin" class="btn btn-secondary-glow">← Back</a>
+  </div>
+
+  <div class="row g-3">
+    <!-- Daily Summary -->
+    <div class="col-lg-5">
+      <div class="elevated-card p-4">
+        <h5 class="page-subtitle mb-3">📅 Daily Breakdown</h5>
+        <div style="max-height: 500px; overflow-y: auto;">
+          <table class="table-premium table-sm">
+            <thead style="position: sticky; top: 0; z-index: 10;">
+              <tr><th>Date</th><th class="text-success">Present</th><th class="text-danger">Absent</th><th class="text-primary">Leave</th></tr>
+            </thead>
+            <tbody>
+              {% for row in daily_rows %}
+              <tr>
+                <td>{{ row.date }}</td>
+                <td class="text-success fw-bold">{{ row.present }}</td>
+                <td class="{% if row.absent > 0 %}text-danger{% else %}text-muted opacity-50{% endif %}">{{ row.absent }}</td>
+                <td class="text-primary">{{ row.on_leave }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center text-muted py-4">No data.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <a href="/admin" class="btn btn-outline-light btn-sm">← Back to Dashboard</a>
+      </div>
     </div>
 
-    <div class="row g-4">
-
-        <!-- Per-user Summary -->
-        <div class="col-lg-7">
-            <div class="card p-4 glass-card">
-                <h5 class="text-info mb-3">👥 Employee Attendance Summary</h5>
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover table-glass align-middle mb-0">
-                        <thead>
-                            <tr><th>Employee</th><th>Dept</th><th>Present</th><th>Absent</th><th>Leave</th><th>Attendance %</th></tr>
-                        </thead>
-                        <tbody>
-                            {% for u in user_summary %}
-                            {% set pct = ((u.present_days / u.total_days * 100) | round(0) | int) if u.total_days > 0 else 0 %}
-                            <tr>
-                                <td class="fw-bold">{{ u.username }}</td>
-                                <td><span class="badge bg-secondary opacity-75">{{ u.department }}</span></td>
-                                <td class="text-success fw-bold">{{ u.present_days }}</td>
-                                <td class="{% if u.absent_days > 3 %}text-danger fw-bold{% else %}text-warning{% endif %}">{{ u.absent_days }}</td>
-                                <td class="text-primary">{{ u.leave_days }}</td>
-                                <td style="min-width:100px">
-                                    <div class="d-flex align-items-center gap-2">
-                                        <div class="bar-wrap flex-grow-1">
-                                            <div class="bar-fill" style="width:{{ pct }}%"></div>
-                                        </div>
-                                        <small>{{ pct }}%</small>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="6" class="text-center opacity-50 py-4">No data yet.</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+    <!-- Employee Summary -->
+    <div class="col-lg-7">
+      <div class="elevated-card p-4">
+        <h5 class="page-subtitle mb-3">👥 Employee Summary</h5>
+        <div style="max-height: 500px; overflow-y: auto;">
+          <table class="table-premium table-sm">
+            <thead style="position: sticky; top: 0; z-index: 10;">
+              <tr><th>Employee</th><th>Dept</th><th class="d-none d-md-table-cell">Present</th><th class="d-none d-md-table-cell">Absent</th><th>Attendance %</th></tr>
+            </thead>
+            <tbody>
+              {% for u in user_summary %}
+              {% set pct = ((u.present_days / u.total_days * 100) | round(0) | int) if u.total_days > 0 else 0 %}
+              <tr>
+                <td class="fw-bold">{{ u.username }}</td>
+                <td><span class="badge bg-secondary">{{ u.department }}</span></td>
+                <td class="d-none d-md-table-cell text-success">{{ u.present_days }}</td>
+                <td class="d-none d-md-table-cell {% if u.absent_days > 3 %}text-danger{% else %}text-warning{% endif %}">{{ u.absent_days }}</td>
+                <td>
+                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="progress-wrap" style="flex: 1;">
+                      <div class="progress-bar-premium" style="width: {{ pct }}%"></div>
+                    </div>
+                    <small>{{ pct }}%</small>
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">No data.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-
-        <!-- Daily Summary -->
-        <div class="col-lg-5">
-            <div class="card p-4 glass-card">
-                <h5 class="text-info mb-3">📅 Daily Summary (Last 30 Days)</h5>
-                <div class="table-responsive" style="max-height:480px; overflow-y:auto;">
-                    <table class="table table-sm table-glass align-middle mb-0">
-                        <thead style="position:sticky;top:0;z-index:1;">
-                            <tr><th>Date</th><th class="text-success">Present</th><th class="text-danger">Absent</th><th class="text-primary">Leave</th></tr>
-                        </thead>
-                        <tbody>
-                            {% for row in daily_rows %}
-                            <tr>
-                                <td>{{ row.date }}</td>
-                                <td class="text-success fw-bold">{{ row.present }}</td>
-                                <td class="{% if row.absent > 0 %}text-danger{% else %}text-muted opacity-50{% endif %}">{{ row.absent }}</td>
-                                <td class="text-primary">{{ row.on_leave }}</td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="4" class="text-center opacity-50 py-4">No data yet.</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
+      </div>
     </div>
+  </div>
+
 </div>
-</body>
-</html>
+{% endblock %}
