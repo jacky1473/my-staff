@@ -2,10 +2,13 @@ import os
 import sqlite3
 import pytz
 import logging
+import random
+import string
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
+from flask_mail import Mail, Message
 
 # ---------------------------------------------------------------------------
 # App Setup
@@ -26,10 +29,24 @@ SHIFT_OPTIONS = [
 ]
 WEEKDAY_OPTIONS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
-# Brute-force protection: {username: [fail_count, lockout_until_datetime or None]}
+# Brute-force protection
 _login_attempts = {}
 MAX_ATTEMPTS    = 5
 LOCKOUT_MINUTES = 15
+
+# OTP storage: {username: {'otp': code, 'expires': datetime, 'role': 'admin'|'staff'}}
+_otp_storage = {}
+OTP_EXPIRY_MINUTES = 5
+
+# Email Configuration (use environment variables in production)
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', True)
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'your-email@gmail.com')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', 'your-app-password')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 'noreply@staffportal.com')
+
+mail = Mail(app)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,6 +72,7 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS users (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
         username          TEXT UNIQUE NOT NULL,
+        email             TEXT UNIQUE,
         password          TEXT NOT NULL,
         department        TEXT NOT NULL,
         role              TEXT NOT NULL,
@@ -74,7 +92,6 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     )''')
 
-    # Announcements / Notice Board
     conn.execute('''CREATE TABLE IF NOT EXISTS announcements (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         title      TEXT    NOT NULL,
@@ -85,12 +102,22 @@ def init_db():
         active     INTEGER DEFAULT 1
     )''')
 
-    # Safe schema upgrades for existing deployments
+    conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id   INTEGER,
+        action    TEXT NOT NULL,
+        details   TEXT,
+        ip_addr   TEXT,
+        timestamp TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
+    )''')
+
     _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN shift TEXT DEFAULT '09:00 AM - 06:00 PM'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
 
     conn.commit()
     conn.close()
@@ -129,7 +156,7 @@ def get_todays_roster():
 
 
 def get_active_announcements():
-    conn = get_db_connection()
+    conn = conn = get_db_connection()
     rows = conn.execute(
         "SELECT * FROM announcements WHERE active = 1 ORDER BY priority DESC, created_at DESC"
     ).fetchall()
@@ -138,7 +165,6 @@ def get_active_announcements():
 
 
 def get_today_stats():
-    """Summary counts for admin dashboard header cards."""
     today = today_str()
     conn  = get_db_connection()
     total   = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
@@ -167,10 +193,79 @@ def get_today_stats():
 
 
 # ---------------------------------------------------------------------------
-# Brute-force protection
+# OTP & Email Functions
+# ---------------------------------------------------------------------------
+def generate_otp():
+    """Generate 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=6))
+
+
+def send_otp_email(user_email, otp, username):
+    """Send OTP via email"""
+    try:
+        subject = f"Your {session.get('company_name', 'Staff Portal')} Login OTP: {otp}"
+        html_body = f"""
+        <html>
+        <head><style>
+            body {{ font-family: Arial, sans-serif; background: #f5f5f5; }}
+            .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+            .header {{ color: #00d9ff; font-size: 24px; font-weight: bold; margin-bottom: 20px; }}
+            .content {{ color: #333; line-height: 1.6; }}
+            .otp-box {{ background: #f0f0f0; padding: 15px; border-radius: 4px; text-align: center; margin: 20px 0; }}
+            .otp {{ font-size: 32px; font-weight: bold; color: #00d9ff; letter-spacing: 5px; }}
+            .footer {{ color: #999; font-size: 12px; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; }}
+        </style></head>
+        <body>
+        <div class="container">
+            <div class="header">🔐 Login Verification</div>
+            <div class="content">
+                <p>Hi <strong>{username}</strong>,</p>
+                <p>Your One-Time Password (OTP) for login is:</p>
+                <div class="otp-box">
+                    <div class="otp">{otp}</div>
+                </div>
+                <p style="color: #ff6b6b;"><strong>⚠️ This OTP expires in 5 minutes.</strong></p>
+                <p>If you didn't request this OTP, please ignore this email.</p>
+                <div class="footer">
+                    <p>© Staff Attendance Portal. Do not share this OTP with anyone.</p>
+                </div>
+            </div>
+        </div>
+        </body>
+        </html>
+        """
+        msg = Message(
+            subject=subject,
+            recipients=[user_email],
+            html=html_body
+        )
+        mail.send(msg)
+        logger.info(f"OTP sent to {user_email}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send OTP email: {e}")
+        return False
+
+
+def log_audit(action, details=None, user_id=None):
+    """Log admin actions for audit trail"""
+    try:
+        conn = get_db_connection()
+        ip_addr = request.remote_addr
+        conn.execute(
+            "INSERT INTO audit_logs (user_id, action, details, ip_addr, timestamp) VALUES (?,?,?,?,?)",
+            (user_id, action, details, ip_addr, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Audit log error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Brute-force protection (same as before)
 # ---------------------------------------------------------------------------
 def _check_lockout(username):
-    """Returns (is_locked, seconds_remaining)."""
     entry = _login_attempts.get(username)
     if not entry:
         return False, 0
@@ -194,7 +289,6 @@ def _record_failed_attempt(username):
 def _clear_attempts(username):
     _login_attempts.pop(username, None)
 
-
 # ---------------------------------------------------------------------------
 # Context Processor
 # ---------------------------------------------------------------------------
@@ -216,7 +310,7 @@ def inject_globals():
 
 
 # ---------------------------------------------------------------------------
-# Before Request — force first-run setup
+# Before Request
 # ---------------------------------------------------------------------------
 @app.before_request
 def check_setup():
@@ -233,7 +327,7 @@ def check_setup():
 
 
 # ---------------------------------------------------------------------------
-# Setup (first run)
+# Setup
 # ---------------------------------------------------------------------------
 @app.route('/setup', methods=['GET', 'POST'])
 def setup():
@@ -246,11 +340,12 @@ def setup():
     if request.method == 'POST':
         company_name = request.form.get('company_name', '').strip()
         admin_user   = request.form.get('admin_username', '').strip()
+        admin_email  = request.form.get('admin_email', '').strip()
         admin_pass   = request.form.get('admin_password', '')
         sec_q        = request.form.get('security_question', '').strip()
         sec_a        = request.form.get('security_answer', '').strip().lower()
 
-        if not all([company_name, admin_user, admin_pass, sec_q, sec_a]):
+        if not all([company_name, admin_user, admin_email, admin_pass, sec_q, sec_a]):
             flash("All fields are required.")
             conn.close()
             return render_template('setup.html')
@@ -260,13 +355,13 @@ def setup():
         existing_admin = conn.execute("SELECT id FROM users WHERE role='Admin'").fetchone()
         if existing_admin:
             conn.execute(
-                "UPDATE users SET username=?, password=?, security_question=?, security_answer=? WHERE id=?",
-                (admin_user, hashed, sec_q, sec_a, existing_admin['id'])
+                "UPDATE users SET username=?, email=?, password=?, security_question=?, security_answer=? WHERE id=?",
+                (admin_user, admin_email, hashed, sec_q, sec_a, existing_admin['id'])
             )
         else:
             conn.execute(
-                "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
-                (admin_user, hashed, 'Management', 'Admin', 'Flexible', 'Sunday', sec_q, sec_a)
+                "INSERT INTO users (username, email, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
+                (admin_user, admin_email, hashed, 'Management', 'Admin', 'Flexible', 'Sunday', sec_q, sec_a)
             )
         conn.commit()
         conn.close()
@@ -278,7 +373,7 @@ def setup():
 
 
 # ---------------------------------------------------------------------------
-# Auth
+# NEW LOGIN with OTP
 # ---------------------------------------------------------------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -286,10 +381,11 @@ def login():
         return redirect(url_for('index'))
 
     if request.method == 'POST':
+        login_type = request.form.get('login_type', 'staff')  # 'admin' or 'staff'
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
 
-        # Lockout check
+        # Check lockout
         locked, secs = _check_lockout(username)
         if locked:
             mins = secs // 60 + 1
@@ -300,17 +396,39 @@ def login():
         user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
         conn.close()
 
-        if user and check_password_hash(user['password'], password):
+        # Verify role matches login type
+        expected_role = 'Admin' if login_type == 'admin' else 'Staff'
+        if user and user['role'] == expected_role and check_password_hash(user['password'], password):
             if user['role'] != 'Admin' and user['department'] not in ALLOWED_DEPARTMENTS:
                 flash('Access denied: unauthorized department.')
                 return redirect(url_for('login'))
-            _clear_attempts(username)
-            session['user_id']    = user['id']
-            session['username']   = user['username']
-            session['department'] = user['department']
-            session['role']       = user['role']
-            logger.info("Login OK: %s (%s)", user['username'], user['role'])
-            return redirect(url_for('index'))
+
+            # Generate OTP
+            otp = generate_otp()
+            otp_expires = ist_now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+            _otp_storage[username] = {
+                'otp': otp,
+                'expires': otp_expires,
+                'role': expected_role,
+                'email': user['email']
+            }
+
+            # Send OTP email
+            if user['email']:
+                if send_otp_email(user['email'], otp, username):
+                    # Temporarily store pending login info
+                    session['pending_login'] = {
+                        'username': username,
+                        'role': expected_role,
+                        'user_id': user['id'],
+                        'department': user['department']
+                    }
+                    flash(f"✅ OTP sent to {user['email']}. Check your inbox!", "success")
+                    return render_template('otp_verify.html', username=username, login_type=login_type)
+                else:
+                    flash("Failed to send OTP. Please try again.")
+            else:
+                flash("Email not configured for this account. Contact admin.")
         else:
             _record_failed_attempt(username)
             count = _login_attempts.get(username, [0])[0]
@@ -323,9 +441,59 @@ def login():
     return render_template('login.html')
 
 
+@app.route('/verify-otp', methods=['POST'])
+def verify_otp():
+    """Verify OTP and complete login"""
+    otp_entered = request.form.get('otp', '').strip()
+    username = request.form.get('username', '').strip()
+
+    if 'pending_login' not in session or session['pending_login']['username'] != username:
+        flash("Session expired. Please login again.")
+        return redirect(url_for('login'))
+
+    if username not in _otp_storage:
+        flash("OTP expired. Please login again.")
+        del session['pending_login']
+        return redirect(url_for('login'))
+
+    otp_data = _otp_storage[username]
+
+    # Check OTP expiry
+    if ist_now() > otp_data['expires']:
+        flash("OTP expired. Please login again.")
+        del _otp_storage[username]
+        del session['pending_login']
+        return redirect(url_for('login'))
+
+    # Verify OTP
+    if otp_data['otp'] != otp_entered:
+        flash("Invalid OTP. Try again.")
+        return render_template('otp_verify.html', username=username)
+
+    # OTP verified! Complete login
+    pending = session['pending_login']
+    _clear_attempts(username)
+    del _otp_storage[username]
+    del session['pending_login']
+
+    session['user_id']    = pending['user_id']
+    session['username']   = username
+    session['department'] = pending['department']
+    session['role']       = pending['role']
+
+    log_audit('LOGIN_SUCCESS', f"Role: {pending['role']}", pending['user_id'])
+    logger.info("Login OK with OTP: %s (%s)", username, pending['role'])
+    flash("✅ Logged in successfully!", "success")
+    return redirect(url_for('index'))
+
+
 @app.route('/logout')
 def logout():
-    logger.info("Logout: %s", session.get('username', '?'))
+    user_id = session.get('user_id')
+    username = session.get('username')
+    role = session.get('role')
+    log_audit('LOGOUT', f"Role: {role}", user_id)
+    logger.info("Logout: %s", username)
     session.clear()
     return redirect(url_for('login'))
 
@@ -357,7 +525,7 @@ def forgot():
                 return redirect(url_for('forgot'))
 
             user = conn.execute(
-                "SELECT security_answer FROM users WHERE username = ?", (username,)
+                "SELECT id, security_answer FROM users WHERE username = ?", (username,)
             ).fetchone()
             if user and user['security_answer'] == answer:
                 conn.execute(
@@ -367,6 +535,7 @@ def forgot():
                 conn.commit()
                 conn.close()
                 _clear_attempts(username)
+                log_audit('PASSWORD_RESET', username=user['id'])
                 flash("Password reset successfully. You may now log in.")
                 return redirect(url_for('login'))
             else:
@@ -378,7 +547,7 @@ def forgot():
 
 
 # ---------------------------------------------------------------------------
-# Index
+# Index & Routing
 # ---------------------------------------------------------------------------
 @app.route('/')
 def index():
@@ -421,7 +590,6 @@ def staff_dashboard():
 
 @app.route('/staff/history')
 def staff_history():
-    """Full attendance history for logged-in staff member."""
     if 'user_id' not in session or session['role'] != 'Staff':
         return redirect(url_for('login'))
     conn = get_db_connection()
@@ -455,7 +623,8 @@ def clock():
                 'INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?,?,?,?)',
                 (user_id, today, now_time, 'Present')
             )
-            flash(f'Clocked in at {now_time} ✅')
+            log_audit('CLOCK_IN', today, user_id)
+            flash(f'✅ Clocked in at {now_time}')
         else:
             flash('You have already clocked in today.')
     elif action == 'out':
@@ -463,7 +632,8 @@ def clock():
             conn.execute(
                 'UPDATE attendance SET clock_out = ? WHERE id = ?', (now_time, record['id'])
             )
-            flash(f'Clocked out at {now_time} 👋')
+            log_audit('CLOCK_OUT', today, user_id)
+            flash(f'👋 Clocked out at {now_time}')
         else:
             flash('You must clock in first, or have already clocked out.')
 
@@ -473,7 +643,7 @@ def clock():
 
 
 # ---------------------------------------------------------------------------
-# Admin Dashboard
+# Admin Dashboard (SAME CODE AS BEFORE)
 # ---------------------------------------------------------------------------
 @app.route('/admin')
 def admin_dashboard():
@@ -505,13 +675,10 @@ def admin_dashboard():
 
 @app.route('/admin/analytics')
 def admin_analytics():
-    """30-day attendance analytics page."""
     if 'user_id' not in session or session['role'] != 'Admin':
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-
-    # Last 30 days daily summary
     rows = conn.execute('''
         SELECT
             a.date,
@@ -525,7 +692,6 @@ def admin_analytics():
         ORDER BY a.date DESC
     ''').fetchall()
 
-    # Per-user summary (last 30 days)
     user_summary = conn.execute('''
         SELECT
             u.username,
@@ -556,31 +722,34 @@ def admin_action():
     try:
         if action_type == 'add_user':
             new_user = request.form.get('new_username', '').strip()
+            new_email = request.form.get('new_email', '').strip()
             new_pass = request.form.get('new_password', '')
             dept     = request.form.get('department', '')
             weekoff  = request.form.get('weekoff', 'Sunday')
 
-            if not new_user or not new_pass or dept not in ALLOWED_DEPARTMENTS:
-                flash("Invalid input: check username, password and department.")
+            if not new_user or not new_pass or not new_email or dept not in ALLOWED_DEPARTMENTS:
+                flash("Invalid input: check username, email, password and department.")
             elif weekoff not in WEEKDAY_OPTIONS:
                 flash("Invalid week-off day.")
             else:
                 try:
                     conn.execute(
-                        "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
-                        (new_user, generate_password_hash(new_pass), dept, 'Staff',
+                        "INSERT INTO users (username, email, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (new_user, new_email, generate_password_hash(new_pass), dept, 'Staff',
                          '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
                     )
-                    flash(f"Employee '{new_user}' created ({dept}, {weekoff} off).")
+                    log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
+                    flash(f"✅ Employee '{new_user}' created ({dept}, {weekoff} off).")
                 except sqlite3.IntegrityError:
-                    flash(f"Username '{new_user}' already exists.")
+                    flash(f"Username or email '{new_user}' already exists.")
 
         elif action_type == 'delete_user':
             target = request.form.get('target_user', '').strip()
             user = conn.execute("SELECT id FROM users WHERE username=? AND role!='Admin'", (target,)).fetchone()
             if user:
                 conn.execute("DELETE FROM users WHERE id = ?", (user['id'],))
-                flash(f"Employee '{target}' and all their records have been removed.")
+                log_audit('USER_DELETED', target, session['user_id'])
+                flash(f"✅ Employee '{target}' and all their records have been removed.")
             else:
                 flash("User not found or cannot delete an admin.")
 
@@ -594,7 +763,8 @@ def admin_action():
                     "UPDATE users SET password=? WHERE username=?",
                     (generate_password_hash(new_pass), target)
                 )
-                flash(f"Password reset for '{target}'.")
+                log_audit('PASSWORD_RESET_ADMIN', target, session['user_id'])
+                flash(f"✅ Password reset for '{target}'.")
 
         elif action_type == 'change_shift':
             target      = request.form.get('target_user', '').strip()
@@ -607,7 +777,8 @@ def admin_action():
                     "UPDATE users SET shift=?, weekoff=? WHERE username=?",
                     (new_shift, new_weekoff, target)
                 )
-                flash(f"Schedule updated for '{target}': {new_shift}, {new_weekoff} off.")
+                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}, {new_weekoff}", session['user_id'])
+                flash(f"✅ Schedule updated for '{target}': {new_shift}, {new_weekoff} off.")
 
         elif action_type == 'mark_leave':
             target = request.form.get('target_user', '').strip()
@@ -628,7 +799,8 @@ def admin_action():
                             'INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)',
                             (user['id'], today, status)
                         )
-                    flash(f"'{target}' marked as {status} for today.")
+                    log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'])
+                    flash(f"✅ '{target}' marked as {status} for today.")
                 else:
                     flash("User not found.")
 
@@ -645,13 +817,15 @@ def admin_action():
                     "INSERT INTO announcements (title, body, priority, created_at, created_by, active) VALUES (?,?,?,?,?,1)",
                     (title, body, priority, ist_now().strftime('%Y-%m-%d %H:%M:%S'), session['username'])
                 )
-                flash(f"Announcement '{title}' posted to all staff.")
+                log_audit('ANNOUNCEMENT_POSTED', title, session['user_id'])
+                flash(f"✅ Announcement '{title}' posted to all staff.")
 
         elif action_type == 'delete_announcement':
             ann_id = request.form.get('ann_id', '')
             if ann_id.isdigit():
                 conn.execute("DELETE FROM announcements WHERE id=?", (int(ann_id),))
-                flash("Announcement removed.")
+                log_audit('ANNOUNCEMENT_DELETED', f"ID: {ann_id}", session['user_id'])
+                flash("✅ Announcement removed.")
             else:
                 flash("Invalid announcement ID.")
 
@@ -661,7 +835,8 @@ def admin_action():
                 flash("Company name cannot be empty.")
             else:
                 conn.execute("UPDATE company SET name=? WHERE id=1", (new_name,))
-                flash(f"Company name updated to '{new_name}'.")
+                log_audit('COMPANY_UPDATED', new_name, session['user_id'])
+                flash(f"✅ Company name updated to '{new_name}'.")
 
         else:
             flash("Unknown action.")
@@ -723,6 +898,7 @@ def export_excel(report_type):
     safe_user   = target_user.replace(' ', '_')
     output_path = f"/tmp/{report_type}_attendance_{safe_user}.xlsx"
     df.to_excel(output_path, index=False)
+    log_audit('EXPORT', f"{report_type} ({target_user})", session['user_id'])
     return send_file(output_path, as_attachment=True)
 
 
