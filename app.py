@@ -448,8 +448,12 @@ def verify_pin():
     pin_entered = request.form.get('pin', '').strip()
     username = request.form.get('username', '').strip()
 
-    if 'pending_login' not in session or session['pending_login']['username'] != username:
+    if 'pending_login' not in session:
         flash("Session expired. Please login again.")
+        return redirect(url_for('login'))
+    
+    if session.get('pending_login', {}).get('username') != username:
+        flash("Session mismatch. Please login again.")
         return redirect(url_for('login'))
 
     if username not in _pin_storage:
@@ -464,27 +468,35 @@ def verify_pin():
     if ist_now() > pin_data['expires']:
         flash("PIN expired. Please login again.")
         del _pin_storage[username]
-        del session['pending_login']
+        if 'pending_login' in session:
+            del session['pending_login']
         return redirect(url_for('login'))
 
     # Verify PIN
     if pin_data['pin'] != pin_entered:
         flash("Invalid PIN. Try again.")
-        return render_template('pin_verify.html', username=username, login_type=session['pending_login']['role'].lower())
+        # Re-render with the same PIN displayed again
+        pending = session.get('pending_login', {})
+        login_type = pending.get('role', 'Staff').lower()
+        return render_template('pin_verify.html', username=username, pin_display=pin_data['pin'], login_type=login_type)
 
     # PIN verified! Complete login
-    pending = session['pending_login']
+    pending = session.get('pending_login', {})
+    if not pending:
+        flash("Session expired. Please login again.")
+        return redirect(url_for('login'))
+    
     _clear_attempts(username)
     del _pin_storage[username]
     del session['pending_login']
 
-    session['user_id']    = pending['user_id']
+    session['user_id']    = pending.get('user_id')
     session['username']   = username
-    session['department'] = pending['department']
-    session['role']       = pending['role']
+    session['department'] = pending.get('department')
+    session['role']       = pending.get('role')
 
-    log_audit('LOGIN_SUCCESS', f"Role: {pending['role']}", pending['user_id'])
-    logger.info("Login successful: %s (%s)", username, pending['role'])
+    log_audit('LOGIN_SUCCESS', f"Role: {pending.get('role')}", pending.get('user_id'))
+    logger.info("Login successful: %s (%s)", username, pending.get('role'))
     flash("✅ Logged in successfully!", "success")
     return redirect(url_for('index'))
 
