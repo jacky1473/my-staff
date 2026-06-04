@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
-from flask_mail import Mail, Message
+import shutil
+import json
 
 # ---------------------------------------------------------------------------
 # App Setup
@@ -17,6 +18,10 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please')
 
 DB_PATH = '/data/attendance.db' if os.path.exists('/data') else 'attendance.db'
+BACKUP_DIR = os.environ.get('BACKUP_DIR', './backups')
+
+# Ensure backup directory exists
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 ALLOWED_DEPARTMENTS = ['IT', 'MIS', 'QA', 'TL', 'Manager', 'Management']
 SHIFT_OPTIONS = [
@@ -31,22 +36,12 @@ WEEKDAY_OPTIONS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 
 # Brute-force protection
 _login_attempts = {}
-MAX_ATTEMPTS    = 5
-LOCKOUT_MINUTES = 15
+MAX_ATTEMPTS    = 3  # Reduced from 5 to 3 for local network
+LOCKOUT_MINUTES = 5   # Reduced from 15 to 5
 
-# OTP storage: {username: {'otp': code, 'expires': datetime, 'role': 'admin'|'staff'}}
-_otp_storage = {}
-OTP_EXPIRY_MINUTES = 5
-
-# Email Configuration (use environment variables in production)
-app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
-app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
-app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', True)
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'your-email@gmail.com')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', 'your-app-password')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 'noreply@staffportal.com')
-
-mail = Mail(app)
+# PIN storage: {username: {'pin': code, 'expires': datetime, 'role': 'Admin'|'Staff'}}
+_pin_storage = {}
+PIN_EXPIRY_MINUTES = 3  # 3 minute expiry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,7 +67,6 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS users (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
         username          TEXT UNIQUE NOT NULL,
-        email             TEXT UNIQUE,
         password          TEXT NOT NULL,
         department        TEXT NOT NULL,
         role              TEXT NOT NULL,
@@ -117,7 +111,6 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
-    _safe_alter(conn, "ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
 
     conn.commit()
     conn.close()
@@ -156,7 +149,7 @@ def get_todays_roster():
 
 
 def get_active_announcements():
-    conn = conn = get_db_connection()
+    conn = get_db_connection()
     rows = conn.execute(
         "SELECT * FROM announcements WHERE active = 1 ORDER BY priority DESC, created_at DESC"
     ).fetchall()
@@ -193,62 +186,15 @@ def get_today_stats():
 
 
 # ---------------------------------------------------------------------------
-# OTP & Email Functions
+# PIN Generation & Verification (NO EMAIL NEEDED!)
 # ---------------------------------------------------------------------------
-def generate_otp():
-    """Generate 6-digit OTP"""
-    return ''.join(random.choices(string.digits, k=6))
-
-
-def send_otp_email(user_email, otp, username):
-    """Send OTP via email"""
-    try:
-        subject = f"Your {session.get('company_name', 'Staff Portal')} Login OTP: {otp}"
-        html_body = f"""
-        <html>
-        <head><style>
-            body {{ font-family: Arial, sans-serif; background: #f5f5f5; }}
-            .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-            .header {{ color: #00d9ff; font-size: 24px; font-weight: bold; margin-bottom: 20px; }}
-            .content {{ color: #333; line-height: 1.6; }}
-            .otp-box {{ background: #f0f0f0; padding: 15px; border-radius: 4px; text-align: center; margin: 20px 0; }}
-            .otp {{ font-size: 32px; font-weight: bold; color: #00d9ff; letter-spacing: 5px; }}
-            .footer {{ color: #999; font-size: 12px; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; }}
-        </style></head>
-        <body>
-        <div class="container">
-            <div class="header">🔐 Login Verification</div>
-            <div class="content">
-                <p>Hi <strong>{username}</strong>,</p>
-                <p>Your One-Time Password (OTP) for login is:</p>
-                <div class="otp-box">
-                    <div class="otp">{otp}</div>
-                </div>
-                <p style="color: #ff6b6b;"><strong>⚠️ This OTP expires in 5 minutes.</strong></p>
-                <p>If you didn't request this OTP, please ignore this email.</p>
-                <div class="footer">
-                    <p>© Staff Attendance Portal. Do not share this OTP with anyone.</p>
-                </div>
-            </div>
-        </div>
-        </body>
-        </html>
-        """
-        msg = Message(
-            subject=subject,
-            recipients=[user_email],
-            html=html_body
-        )
-        mail.send(msg)
-        logger.info(f"OTP sent to {user_email}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send OTP email: {e}")
-        return False
+def generate_pin():
+    """Generate 4-digit PIN"""
+    return ''.join(random.choices(string.digits, k=4))
 
 
 def log_audit(action, details=None, user_id=None):
-    """Log admin actions for audit trail"""
+    """Log admin actions"""
     try:
         conn = get_db_connection()
         ip_addr = request.remote_addr
@@ -263,7 +209,7 @@ def log_audit(action, details=None, user_id=None):
 
 
 # ---------------------------------------------------------------------------
-# Brute-force protection (same as before)
+# Brute-force protection
 # ---------------------------------------------------------------------------
 def _check_lockout(username):
     entry = _login_attempts.get(username)
@@ -288,6 +234,66 @@ def _record_failed_attempt(username):
 
 def _clear_attempts(username):
     _login_attempts.pop(username, None)
+
+
+# ---------------------------------------------------------------------------
+# Backup Functions
+# ---------------------------------------------------------------------------
+def create_backup():
+    """Create database backup"""
+    try:
+        timestamp = ist_now().strftime('%Y%m%d_%H%M%S')
+        backup_file = os.path.join(BACKUP_DIR, f'attendance_backup_{timestamp}.db')
+        shutil.copy2(DB_PATH, backup_file)
+        logger.info(f"Backup created: {backup_file}")
+        return backup_file
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+        return None
+
+
+def get_backups():
+    """List all available backups"""
+    try:
+        backups = []
+        for file in sorted(os.listdir(BACKUP_DIR), reverse=True):
+            if file.startswith('attendance_backup_') and file.endswith('.db'):
+                filepath = os.path.join(BACKUP_DIR, file)
+                size = os.path.getsize(filepath)
+                mtime = os.path.getmtime(filepath)
+                backups.append({
+                    'filename': file,
+                    'filepath': filepath,
+                    'size': size,
+                    'mtime': datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+                })
+        return backups[:7]  # Keep last 7 backups
+    except Exception as e:
+        logger.error(f"Get backups failed: {e}")
+        return []
+
+
+def restore_backup(backup_file):
+    """Restore from backup"""
+    try:
+        shutil.copy2(backup_file, DB_PATH)
+        logger.info(f"Database restored from {backup_file}")
+        return True
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        return False
+
+
+def cleanup_old_backups():
+    """Keep only last 7 backups"""
+    try:
+        backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith('attendance_backup_')])
+        if len(backups) > 7:
+            for old_backup in backups[:-7]:
+                os.remove(os.path.join(BACKUP_DIR, old_backup))
+    except Exception as e:
+        logger.error(f"Cleanup failed: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Context Processor
@@ -340,12 +346,11 @@ def setup():
     if request.method == 'POST':
         company_name = request.form.get('company_name', '').strip()
         admin_user   = request.form.get('admin_username', '').strip()
-        admin_email  = request.form.get('admin_email', '').strip()
         admin_pass   = request.form.get('admin_password', '')
         sec_q        = request.form.get('security_question', '').strip()
         sec_a        = request.form.get('security_answer', '').strip().lower()
 
-        if not all([company_name, admin_user, admin_email, admin_pass, sec_q, sec_a]):
+        if not all([company_name, admin_user, admin_pass, sec_q, sec_a]):
             flash("All fields are required.")
             conn.close()
             return render_template('setup.html')
@@ -355,17 +360,18 @@ def setup():
         existing_admin = conn.execute("SELECT id FROM users WHERE role='Admin'").fetchone()
         if existing_admin:
             conn.execute(
-                "UPDATE users SET username=?, email=?, password=?, security_question=?, security_answer=? WHERE id=?",
-                (admin_user, admin_email, hashed, sec_q, sec_a, existing_admin['id'])
+                "UPDATE users SET username=?, password=?, security_question=?, security_answer=? WHERE id=?",
+                (admin_user, hashed, sec_q, sec_a, existing_admin['id'])
             )
         else:
             conn.execute(
-                "INSERT INTO users (username, email, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
-                (admin_user, admin_email, hashed, 'Management', 'Admin', 'Flexible', 'Sunday', sec_q, sec_a)
+                "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
+                (admin_user, hashed, 'Management', 'Admin', 'Flexible', 'Sunday', sec_q, sec_a)
             )
         conn.commit()
         conn.close()
-        flash("System initialized! Welcome to your portal.")
+        create_backup()  # Create first backup after setup
+        flash("✅ System initialized! Welcome to your portal.")
         return redirect(url_for('login'))
 
     conn.close()
@@ -373,7 +379,7 @@ def setup():
 
 
 # ---------------------------------------------------------------------------
-# NEW LOGIN with OTP
+# NEW LOGIN with PIN (Not Email OTP!)
 # ---------------------------------------------------------------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -381,7 +387,7 @@ def login():
         return redirect(url_for('index'))
 
     if request.method == 'POST':
-        login_type = request.form.get('login_type', 'staff')  # 'admin' or 'staff'
+        login_type = request.form.get('login_type', 'staff')
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
 
@@ -389,7 +395,7 @@ def login():
         locked, secs = _check_lockout(username)
         if locked:
             mins = secs // 60 + 1
-            flash(f"Account locked after too many failed attempts. Try again in {mins} minute(s).")
+            flash(f"Account locked. Try again in {mins} minute(s).")
             return render_template('login.html')
 
         conn = get_db_connection()
@@ -403,77 +409,73 @@ def login():
                 flash('Access denied: unauthorized department.')
                 return redirect(url_for('login'))
 
-            # Generate OTP
-            otp = generate_otp()
-            otp_expires = ist_now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
-            _otp_storage[username] = {
-                'otp': otp,
-                'expires': otp_expires,
+            # Generate PIN (4 digits, NO email needed!)
+            pin = generate_pin()
+            pin_expires = ist_now() + timedelta(minutes=PIN_EXPIRY_MINUTES)
+            _pin_storage[username] = {
+                'pin': pin,
+                'expires': pin_expires,
                 'role': expected_role,
-                'email': user['email']
+                'user_id': user['id'],
+                'department': user['department']
             }
 
-            # Send OTP email
-            if user['email']:
-                if send_otp_email(user['email'], otp, username):
-                    # Temporarily store pending login info
-                    session['pending_login'] = {
-                        'username': username,
-                        'role': expected_role,
-                        'user_id': user['id'],
-                        'department': user['department']
-                    }
-                    flash(f"✅ OTP sent to {user['email']}. Check your inbox!", "success")
-                    return render_template('otp_verify.html', username=username, login_type=login_type)
-                else:
-                    flash("Failed to send OTP. Please try again.")
-            else:
-                flash("Email not configured for this account. Contact admin.")
+            # Store in session for verification page
+            session['pending_login'] = {
+                'username': username,
+                'role': expected_role,
+                'user_id': user['id'],
+                'department': user['department']
+            }
+
+            flash(f"✅ Your PIN is: {pin}", "success")
+            return render_template('pin_verify.html', username=username, pin_display=pin, login_type=login_type)
         else:
             _record_failed_attempt(username)
             count = _login_attempts.get(username, [0])[0]
             remaining = MAX_ATTEMPTS - count
             if remaining > 0:
-                flash(f"Invalid username or password. {remaining} attempt(s) remaining.")
+                flash(f"Invalid credentials. {remaining} attempt(s) left.")
             else:
-                flash(f"Account locked for {LOCKOUT_MINUTES} minutes due to too many failed attempts.")
+                flash(f"Account locked for {LOCKOUT_MINUTES} minutes.")
 
     return render_template('login.html')
 
 
-@app.route('/verify-otp', methods=['POST'])
-def verify_otp():
-    """Verify OTP and complete login"""
-    otp_entered = request.form.get('otp', '').strip()
+@app.route('/verify-pin', methods=['POST'])
+def verify_pin():
+    """Verify PIN and complete login"""
+    pin_entered = request.form.get('pin', '').strip()
     username = request.form.get('username', '').strip()
 
     if 'pending_login' not in session or session['pending_login']['username'] != username:
         flash("Session expired. Please login again.")
         return redirect(url_for('login'))
 
-    if username not in _otp_storage:
-        flash("OTP expired. Please login again.")
+    if username not in _pin_storage:
+        flash("PIN expired. Please login again.")
+        if 'pending_login' in session:
+            del session['pending_login']
+        return redirect(url_for('login'))
+
+    pin_data = _pin_storage[username]
+
+    # Check PIN expiry
+    if ist_now() > pin_data['expires']:
+        flash("PIN expired. Please login again.")
+        del _pin_storage[username]
         del session['pending_login']
         return redirect(url_for('login'))
 
-    otp_data = _otp_storage[username]
+    # Verify PIN
+    if pin_data['pin'] != pin_entered:
+        flash("Invalid PIN. Try again.")
+        return render_template('pin_verify.html', username=username, login_type=session['pending_login']['role'].lower())
 
-    # Check OTP expiry
-    if ist_now() > otp_data['expires']:
-        flash("OTP expired. Please login again.")
-        del _otp_storage[username]
-        del session['pending_login']
-        return redirect(url_for('login'))
-
-    # Verify OTP
-    if otp_data['otp'] != otp_entered:
-        flash("Invalid OTP. Try again.")
-        return render_template('otp_verify.html', username=username)
-
-    # OTP verified! Complete login
+    # PIN verified! Complete login
     pending = session['pending_login']
     _clear_attempts(username)
-    del _otp_storage[username]
+    del _pin_storage[username]
     del session['pending_login']
 
     session['user_id']    = pending['user_id']
@@ -482,7 +484,7 @@ def verify_otp():
     session['role']       = pending['role']
 
     log_audit('LOGIN_SUCCESS', f"Role: {pending['role']}", pending['user_id'])
-    logger.info("Login OK with OTP: %s (%s)", username, pending['role'])
+    logger.info("Login successful: %s (%s)", username, pending['role'])
     flash("✅ Logged in successfully!", "success")
     return redirect(url_for('index'))
 
@@ -495,6 +497,7 @@ def logout():
     log_audit('LOGOUT', f"Role: {role}", user_id)
     logger.info("Logout: %s", username)
     session.clear()
+    flash("Logged out successfully.")
     return redirect(url_for('login'))
 
 
@@ -536,7 +539,7 @@ def forgot():
                 conn.close()
                 _clear_attempts(username)
                 log_audit('PASSWORD_RESET', username=user['id'])
-                flash("Password reset successfully. You may now log in.")
+                flash("✅ Password reset successfully. You may now log in.")
                 return redirect(url_for('login'))
             else:
                 conn.close()
@@ -643,7 +646,7 @@ def clock():
 
 
 # ---------------------------------------------------------------------------
-# Admin Dashboard (SAME CODE AS BEFORE)
+# Admin Dashboard
 # ---------------------------------------------------------------------------
 @app.route('/admin')
 def admin_dashboard():
@@ -682,10 +685,10 @@ def admin_analytics():
     rows = conn.execute('''
         SELECT
             a.date,
-            COUNT(DISTINCT a.user_id)                                        AS total_marked,
-            SUM(CASE WHEN a.clock_in IS NOT NULL THEN 1 ELSE 0 END)          AS present,
-            SUM(CASE WHEN a.status = 'Absent'    THEN 1 ELSE 0 END)          AS absent,
-            SUM(CASE WHEN a.status = 'Leave'     THEN 1 ELSE 0 END)          AS on_leave
+            COUNT(DISTINCT a.user_id) AS total_marked,
+            SUM(CASE WHEN a.clock_in IS NOT NULL THEN 1 ELSE 0 END) AS present,
+            SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) AS absent,
+            SUM(CASE WHEN a.status = 'Leave' THEN 1 ELSE 0 END) AS on_leave
         FROM attendance a
         WHERE a.date >= date('now', '-30 days')
         GROUP BY a.date
@@ -694,12 +697,11 @@ def admin_analytics():
 
     user_summary = conn.execute('''
         SELECT
-            u.username,
-            u.department,
-            COUNT(a.id)                                                   AS total_days,
-            SUM(CASE WHEN a.clock_in IS NOT NULL THEN 1 ELSE 0 END)       AS present_days,
-            SUM(CASE WHEN a.status = 'Absent'    THEN 1 ELSE 0 END)       AS absent_days,
-            SUM(CASE WHEN a.status = 'Leave'     THEN 1 ELSE 0 END)       AS leave_days
+            u.username, u.department,
+            COUNT(a.id) AS total_days,
+            SUM(CASE WHEN a.clock_in IS NOT NULL THEN 1 ELSE 0 END) AS present_days,
+            SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) AS absent_days,
+            SUM(CASE WHEN a.status = 'Leave' THEN 1 ELSE 0 END) AS leave_days
         FROM users u
         LEFT JOIN attendance a ON u.id = a.user_id AND a.date >= date('now', '-30 days')
         WHERE u.role != 'Admin'
@@ -709,6 +711,63 @@ def admin_analytics():
 
     conn.close()
     return render_template('analytics.html', daily_rows=rows, user_summary=user_summary)
+
+
+@app.route('/admin/system')
+def admin_system():
+    """Server status & backup management"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    try:
+        db_size = os.path.getsize(DB_PATH) / (1024 * 1024)  # MB
+    except:
+        db_size = 0
+
+    backups = get_backups()
+    conn = get_db_connection()
+    user_count = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
+    conn.close()
+
+    return render_template('system.html', db_size=db_size, backups=backups, user_count=user_count)
+
+
+@app.route('/admin/backup', methods=['POST'])
+def admin_backup():
+    """Create backup manually"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    backup_file = create_backup()
+    if backup_file:
+        log_audit('BACKUP_CREATED', backup_file, session['user_id'])
+        flash(f"✅ Backup created successfully!")
+    else:
+        flash("❌ Backup failed. Check disk space.")
+
+    return redirect(url_for('admin_system'))
+
+
+@app.route('/admin/restore/<backup_name>', methods=['POST'])
+def admin_restore(backup_name):
+    """Restore from backup"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    backup_file = os.path.join(BACKUP_DIR, backup_name)
+    
+    # Security check: ensure file is in backup directory
+    if not backup_file.startswith(BACKUP_DIR) or not os.path.exists(backup_file):
+        flash("❌ Invalid backup file.")
+        return redirect(url_for('admin_system'))
+
+    if restore_backup(backup_file):
+        log_audit('DATABASE_RESTORED', backup_name, session['user_id'])
+        flash(f"✅ Database restored from {backup_name}!")
+    else:
+        flash("❌ Restore failed. Check permissions.")
+
+    return redirect(url_for('admin_system'))
 
 
 @app.route('/admin_action', methods=['POST'])
@@ -722,26 +781,25 @@ def admin_action():
     try:
         if action_type == 'add_user':
             new_user = request.form.get('new_username', '').strip()
-            new_email = request.form.get('new_email', '').strip()
             new_pass = request.form.get('new_password', '')
             dept     = request.form.get('department', '')
             weekoff  = request.form.get('weekoff', 'Sunday')
 
-            if not new_user or not new_pass or not new_email or dept not in ALLOWED_DEPARTMENTS:
-                flash("Invalid input: check username, email, password and department.")
+            if not new_user or not new_pass or dept not in ALLOWED_DEPARTMENTS:
+                flash("Invalid input.")
             elif weekoff not in WEEKDAY_OPTIONS:
                 flash("Invalid week-off day.")
             else:
                 try:
                     conn.execute(
-                        "INSERT INTO users (username, email, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (new_user, new_email, generate_password_hash(new_pass), dept, 'Staff',
+                        "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
+                        (new_user, generate_password_hash(new_pass), dept, 'Staff',
                          '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
                     )
                     log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
-                    flash(f"✅ Employee '{new_user}' created ({dept}, {weekoff} off).")
+                    flash(f"✅ Employee '{new_user}' created.")
                 except sqlite3.IntegrityError:
-                    flash(f"Username or email '{new_user}' already exists.")
+                    flash(f"Username '{new_user}' already exists.")
 
         elif action_type == 'delete_user':
             target = request.form.get('target_user', '').strip()
@@ -749,15 +807,15 @@ def admin_action():
             if user:
                 conn.execute("DELETE FROM users WHERE id = ?", (user['id'],))
                 log_audit('USER_DELETED', target, session['user_id'])
-                flash(f"✅ Employee '{target}' and all their records have been removed.")
+                flash(f"✅ Employee '{target}' removed.")
             else:
-                flash("User not found or cannot delete an admin.")
+                flash("User not found.")
 
         elif action_type == 'reset_password':
             target   = request.form.get('target_user', '').strip()
             new_pass = request.form.get('new_password', '')
             if len(new_pass) < 6:
-                flash("Password must be at least 6 characters.")
+                flash("Password must be 6+ characters.")
             else:
                 conn.execute(
                     "UPDATE users SET password=? WHERE username=?",
@@ -771,14 +829,14 @@ def admin_action():
             new_shift   = request.form.get('new_shift', '')
             new_weekoff = request.form.get('new_weekoff', '')
             if new_shift not in SHIFT_OPTIONS or new_weekoff not in WEEKDAY_OPTIONS:
-                flash("Invalid shift or week-off value.")
+                flash("Invalid shift or week-off.")
             else:
                 conn.execute(
                     "UPDATE users SET shift=?, weekoff=? WHERE username=?",
                     (new_shift, new_weekoff, target)
                 )
-                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}, {new_weekoff}", session['user_id'])
-                flash(f"✅ Schedule updated for '{target}': {new_shift}, {new_weekoff} off.")
+                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}", session['user_id'])
+                flash(f"✅ Schedule updated for '{target}'.")
 
         elif action_type == 'mark_leave':
             target = request.form.get('target_user', '').strip()
@@ -800,7 +858,7 @@ def admin_action():
                             (user['id'], today, status)
                         )
                     log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'])
-                    flash(f"✅ '{target}' marked as {status} for today.")
+                    flash(f"✅ '{target}' marked as {status}.")
                 else:
                     flash("User not found.")
 
@@ -809,7 +867,7 @@ def admin_action():
             body     = request.form.get('ann_body', '').strip()
             priority = request.form.get('ann_priority', 'normal')
             if not title or not body:
-                flash("Announcement title and message are required.")
+                flash("Title and message required.")
             elif priority not in ('normal', 'high', 'urgent'):
                 flash("Invalid priority.")
             else:
@@ -818,7 +876,7 @@ def admin_action():
                     (title, body, priority, ist_now().strftime('%Y-%m-%d %H:%M:%S'), session['username'])
                 )
                 log_audit('ANNOUNCEMENT_POSTED', title, session['user_id'])
-                flash(f"✅ Announcement '{title}' posted to all staff.")
+                flash(f"✅ Announcement posted.")
 
         elif action_type == 'delete_announcement':
             ann_id = request.form.get('ann_id', '')
@@ -827,26 +885,23 @@ def admin_action():
                 log_audit('ANNOUNCEMENT_DELETED', f"ID: {ann_id}", session['user_id'])
                 flash("✅ Announcement removed.")
             else:
-                flash("Invalid announcement ID.")
+                flash("Invalid ID.")
 
         elif action_type == 'update_company':
             new_name = request.form.get('company_name', '').strip()
             if not new_name:
-                flash("Company name cannot be empty.")
+                flash("Company name required.")
             else:
                 conn.execute("UPDATE company SET name=? WHERE id=1", (new_name,))
                 log_audit('COMPANY_UPDATED', new_name, session['user_id'])
-                flash(f"✅ Company name updated to '{new_name}'.")
-
-        else:
-            flash("Unknown action.")
+                flash(f"✅ Company name updated.")
 
         conn.commit()
 
     except Exception as e:
         conn.rollback()
-        logger.error("Admin action error: %s", e)
-        flash("An error occurred. Please try again.")
+        logger.error(f"Admin action error: {e}")
+        flash("❌ Error. Please try again.")
     finally:
         conn.close()
 
@@ -877,7 +932,7 @@ def export_excel(report_type):
     conn.close()
 
     if df.empty:
-        flash("No attendance data to export.")
+        flash("No attendance data.")
         return redirect(url_for('admin_dashboard'))
 
     df['date'] = pd.to_datetime(df['date'])
@@ -891,7 +946,7 @@ def export_excel(report_type):
         df = df[df['username'] == target_user]
 
     if df.empty:
-        flash("No records found for the selected filter.")
+        flash("No records found.")
         return redirect(url_for('admin_dashboard'))
 
     df['date']  = df['date'].dt.strftime('%Y-%m-%d')
@@ -921,9 +976,27 @@ def api_status():
         "current_time_ist": server_time,
         "metrics": {
             "total_registered_staff": total_staff,
-            "active_in_office_now":   in_office,
+            "active_in_office_now": in_office,
         }
     })
+
+
+# ---------------------------------------------------------------------------
+# Auto-backup on startup
+# ---------------------------------------------------------------------------
+def start_autobackup():
+    """Create backup on startup"""
+    import atexit
+    import signal
+    
+    def backup_handler(signum=None, frame=None):
+        logger.info("Creating backup before shutdown...")
+        create_backup()
+        cleanup_old_backups()
+    
+    atexit.register(backup_handler)
+    signal.signal(signal.SIGTERM, backup_handler)
+    signal.signal(signal.SIGINT, backup_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -931,5 +1004,6 @@ def api_status():
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
     init_db()
+    start_autobackup()
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     app.run(host='0.0.0.0', port=5000, debug=debug_mode)
