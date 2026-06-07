@@ -50,9 +50,11 @@ logger = logging.getLogger(__name__)
 # Database
 # ---------------------------------------------------------------------------
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode=WAL")   # Better concurrent access
+    conn.execute("PRAGMA synchronous=NORMAL") # Faster writes, still safe
     return conn
 
 
@@ -194,10 +196,11 @@ def generate_pin():
 
 
 def log_audit(action, details=None, user_id=None):
-    """Log admin actions"""
+    """Log admin actions — uses own connection with timeout to avoid locking"""
     try:
-        conn = get_db_connection()
-        ip_addr = request.remote_addr
+        ip_addr = request.remote_addr if request else 'system'
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")  # Allows concurrent reads
         conn.execute(
             "INSERT INTO audit_logs (user_id, action, details, ip_addr, timestamp) VALUES (?,?,?,?,?)",
             (user_id, action, details, ip_addr, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
