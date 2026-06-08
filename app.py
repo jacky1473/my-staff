@@ -994,6 +994,66 @@ def export_excel(report_type):
 IDLE_SECONDS    = 60    # 1 minute no activity → idle
 OFFLINE_SECONDS = 300   # 5 minutes no heartbeat → offline
 
+@app.route('/api/agent-login', methods=['POST'])
+def agent_login():
+    """Windows agent login — returns session for heartbeat"""
+    data     = request.get_json(silent=True) or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not username or not password:
+        return jsonify({'ok': False, 'error': 'Missing credentials'}), 400
+
+    # Check lockout
+    locked, secs = _check_lockout(username)
+    if locked:
+        return jsonify({'ok': False, 'error': f'Locked for {secs}s'}), 429
+
+    conn = get_db_connection()
+    user = conn.execute(
+        'SELECT * FROM users WHERE username = ?', (username,)
+    ).fetchone()
+    conn.close()
+
+    if user and check_password_hash(user['password'], password):
+        _clear_attempts(username)
+        session['user_id']    = user['id']
+        session['username']   = user['username']
+        session['department'] = user['department']
+        session['role']       = user['role']
+        log_audit('AGENT_LOGIN', f"Windows agent login: {username}", user['id'])
+        return jsonify({'ok': True, 'role': user['role']})
+
+    _record_failed_attempt(username)
+    return jsonify({'ok': False, 'error': 'Invalid credentials'}), 401
+
+
+@app.route('/api/agent-logout', methods=['POST'])
+def agent_logout():
+    """Mark agent as offline on shutdown"""
+    if 'user_id' not in session:
+        return jsonify({'ok': False}), 401
+
+    user_id  = session['user_id']
+    username = session['username']
+    now_str  = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            "UPDATE activity_logs SET status='offline', last_seen=? WHERE user_id=?",
+            (now_str, user_id)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Agent logout error: {e}")
+
+    log_audit('AGENT_LOGOUT', f"Windows agent logout: {username}", user_id)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
     """Called every 10s from staff browser — silent tracking"""
@@ -1005,8 +1065,24 @@ def heartbeat():
     username    = session['username']
     current_page= data.get('page', '/')
     has_activity= data.get('active', False)  # True = mouse/keyboard detected
+    is_offline  = data.get('offline', False)  # True = agent shutting down
     ip_addr     = request.remote_addr
     now_str     = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # If agent is shutting down, mark offline immediately
+    if is_offline:
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=5)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(
+                "UPDATE activity_logs SET status='offline', last_seen=? WHERE user_id=?",
+                (now_str, user_id)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Offline mark error: {e}")
+        return jsonify({'ok': True})
 
     try:
         conn = sqlite3.connect(DB_PATH, timeout=5)
