@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics — {{ company_name }}{% endblock %}
+
+{% block body %}
+<div style="max-width: 1400px; margin: 0 auto; padding: 1.25rem;">
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">📊 30-Day Analytics</div>
+      <p class="page-subtitle">Attendance trends and insights</p>
+    </div>
+    <a href="/admin" class="btn btn-secondary-glow">← Back</a>
+  </div>
+
+  <div class="row g-3">
+    <!-- Daily Summary -->
+    <div class="col-lg-5">
+      <div class="elevated-card p-4">
+        <h5 class="page-subtitle mb-3">📅 Daily Breakdown</h5>
+        <div style="max-height: 500px; overflow-y: auto;">
+          <table class="table-premium table-sm">
+            <thead style="position: sticky; top: 0; z-index: 10;">
+              <tr><th>Date</th><th class="text-success">Present</th><th class="text-danger">Absent</th><th class="text-primary">Leave</th></tr>
+            </thead>
+            <tbody>
+              {% for row in daily_rows %}
+              <tr>
+                <td>{{ row.date }}</td>
+                <td class="text-success fw-bold">{{ row.present }}</td>
+                <td class="{% if row.absent > 0 %}text-danger{% else %}text-muted opacity-50{% endif %}">{{ row.absent }}</td>
+                <td class="text-primary">{{ row.on_leave }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center text-muted py-4">No data.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Employee Summary -->
+    <div class="col-lg-7">
+      <div class="elevated-card p-4">
+        <h5 class="page-subtitle mb-3">👥 Employee Summary</h5>
+        <div style="max-height: 500px; overflow-y: auto;">
+          <table class="table-premium table-sm">
+            <thead style="position: sticky; top: 0; z-index: 10;">
+              <tr><th>Employee</th><th>Dept</th><th class="d-none d-md-table-cell">Present</th><th class="d-none d-md-table-cell">Absent</th><th>Attendance %</th></tr>
+            </thead>
+            <tbody>
+              {% for u in user_summary %}
+              {% set pct = ((u.present_days / u.total_days * 100) | round(0) | int) if u.total_days > 0 else 0 %}
+              <tr>
+                <td class="fw-bold">{{ u.username }}</td>
+                <td><span class="badge bg-secondary">{{ u.department }}</span></td>
+                <td class="d-none d-md-table-cell text-success">{{ u.present_days }}</td>
+                <td class="d-none d-md-table-cell {% if u.absent_days > 3 %}text-danger{% else %}text-warning{% endif %}">{{ u.absent_days }}</td>
+                <td>
+                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="progress-wrap" style="flex: 1;">
+                      <div class="progress-bar-premium" style="width: {{ pct }}%"></div>
+                    </div>
+                    <small>{{ pct }}%</small>
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">No data.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
