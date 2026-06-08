@@ -103,6 +103,8 @@
                 <td style="font-size: 0.85rem;">
                   {% if log.status == 'Leave' %}
                     <span class="badge badge-status status-away">Leave</span>
+                  {% elif log.status == 'Late' %}
+                    <span class="badge badge-status status-away">Late</span>
                   {% elif log.status == 'Absent' %}
                     <span class="badge badge-status status-absent">Absent</span>
                   {% elif log.clock_in %}
