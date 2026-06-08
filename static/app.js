@@ -283,3 +283,61 @@ document.addEventListener('DOMContentLoaded', () => {
 window.Toast = Toast;
 window.setLoading = setLoading;
 window.fetchWithToast = fetchWithToast;
+
+// =============================================================
+// SILENT ACTIVITY TRACKER (staff side — invisible to staff)
+// Tracks mouse & keyboard activity on the web app only
+// Sends heartbeat to server every 10 seconds
+// =============================================================
+(function() {
+  // Only run if user is logged in (not on login/setup pages)
+  const noTrackPages = ['/login', '/setup', '/forgot', '/verify-pin'];
+  if (noTrackPages.some(p => window.location.pathname.startsWith(p))) return;
+
+  let hasActivity = false;
+  const HEARTBEAT_INTERVAL = 10000; // 10 seconds
+
+  // Detect mouse movement silently
+  document.addEventListener('mousemove', () => { hasActivity = true; }, { passive: true });
+  document.addEventListener('mousedown', () => { hasActivity = true; }, { passive: true });
+
+  // Detect keyboard silently
+  document.addEventListener('keydown', () => { hasActivity = true; }, { passive: true });
+
+  // Detect touch (mobile)
+  document.addEventListener('touchstart', () => { hasActivity = true; }, { passive: true });
+  document.addEventListener('touchmove',  () => { hasActivity = true; }, { passive: true });
+
+  // Detect scroll
+  document.addEventListener('scroll', () => { hasActivity = true; }, { passive: true });
+
+  // Send heartbeat
+  function sendHeartbeat() {
+    const payload = {
+      page:   window.location.pathname,
+      active: hasActivity,
+    };
+    hasActivity = false; // Reset after each heartbeat
+
+    fetch('/api/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {}); // Silent fail — staff won't see errors
+  }
+
+  // Send immediately on load, then every 10 seconds
+  sendHeartbeat();
+  setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
+
+  // Send on page visibility change (tab switch)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sendHeartbeat();
+  });
+
+  // Send before page unload
+  window.addEventListener('beforeunload', () => {
+    navigator.sendBeacon('/api/heartbeat', JSON.stringify({ page: window.location.pathname, active: false }));
+  });
+})();

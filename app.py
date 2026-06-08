@@ -108,6 +108,18 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
     )''')
 
+    conn.execute('''CREATE TABLE IF NOT EXISTS activity_logs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER NOT NULL UNIQUE,
+        username     TEXT NOT NULL,
+        status       TEXT DEFAULT 'offline',
+        current_page TEXT DEFAULT '/',
+        ip_addr      TEXT,
+        last_seen    TEXT,
+        last_active  TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
     _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN shift TEXT DEFAULT '09:00 AM - 06:00 PM'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
@@ -975,6 +987,171 @@ def export_excel(report_type):
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# LIVE ACTIVITY TRACKING
+# ---------------------------------------------------------------------------
+
+IDLE_SECONDS    = 60    # 1 minute no activity → idle
+OFFLINE_SECONDS = 300   # 5 minutes no heartbeat → offline
+
+@app.route('/api/heartbeat', methods=['POST'])
+def heartbeat():
+    """Called every 10s from staff browser — silent tracking"""
+    if 'user_id' not in session:
+        return jsonify({'ok': False}), 401
+
+    data        = request.get_json(silent=True) or {}
+    user_id     = session['user_id']
+    username    = session['username']
+    current_page= data.get('page', '/')
+    has_activity= data.get('active', False)  # True = mouse/keyboard detected
+    ip_addr     = request.remote_addr
+    now_str     = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        existing = conn.execute(
+            "SELECT id, last_active FROM activity_logs WHERE user_id=?", (user_id,)
+        ).fetchone()
+
+        if existing:
+            # Update last_seen always; update last_active only if activity
+            if has_activity:
+                conn.execute(
+                    "UPDATE activity_logs SET status='active', last_seen=?, last_active=?, current_page=?, ip_addr=? WHERE user_id=?",
+                    (now_str, now_str, current_page, ip_addr, user_id)
+                )
+            else:
+                # Compute idle vs active from last_active
+                last_active = existing[1] or now_str
+                try:
+                    la = datetime.strptime(last_active, '%Y-%m-%d %H:%M:%S')
+                    la = pytz.timezone('Asia/Kolkata').localize(la)
+                    diff = (ist_now() - la).total_seconds()
+                except:
+                    diff = 0
+                status = 'active' if diff < IDLE_SECONDS else 'idle'
+                conn.execute(
+                    "UPDATE activity_logs SET status=?, last_seen=?, current_page=?, ip_addr=? WHERE user_id=?",
+                    (status, now_str, current_page, ip_addr, user_id)
+                )
+        else:
+            conn.execute(
+                "INSERT INTO activity_logs (user_id, username, status, current_page, ip_addr, last_seen, last_active) VALUES (?,?,?,?,?,?,?)",
+                (user_id, username, 'active', current_page, ip_addr, now_str, now_str)
+            )
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Heartbeat error: {e}")
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/activity')
+def get_activity():
+    """Admin only — returns live activity of all staff"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    now = ist_now()
+    try:
+        conn = get_db_connection()
+
+        # Get all staff
+        staff = conn.execute(
+            "SELECT id, username, department, shift FROM users WHERE role != 'Admin' ORDER BY department, username"
+        ).fetchall()
+
+        # Get activity logs
+        activity = conn.execute(
+            "SELECT user_id, status, current_page, ip_addr, last_seen, last_active FROM activity_logs"
+        ).fetchall()
+        conn.close()
+
+        activity_map = {row['user_id']: row for row in activity}
+
+        result = []
+        for s in staff:
+            act = activity_map.get(s['id'])
+            if act:
+                # Recalculate status based on time elapsed
+                last_seen = act['last_seen']
+                try:
+                    ls = datetime.strptime(last_seen, '%Y-%m-%d %H:%M:%S')
+                    ls = pytz.timezone('Asia/Kolkata').localize(ls)
+                    elapsed = (now - ls).total_seconds()
+                except:
+                    elapsed = 9999
+
+                if elapsed > OFFLINE_SECONDS:
+                    status = 'offline'
+                elif elapsed > IDLE_SECONDS:
+                    status = 'idle'
+                else:
+                    status = act['status'] or 'active'
+
+                last_active = act['last_active'] or '—'
+                # Format last seen nicely
+                try:
+                    ls_dt = datetime.strptime(last_seen, '%Y-%m-%d %H:%M:%S')
+                    ls_dt = pytz.timezone('Asia/Kolkata').localize(ls_dt)
+                    secs  = int((now - ls_dt).total_seconds())
+                    if secs < 60:   ago = f"{secs}s ago"
+                    elif secs < 3600: ago = f"{secs//60}m ago"
+                    else:           ago = f"{secs//3600}h ago"
+                except:
+                    ago = '—'
+
+                result.append({
+                    'user_id':      s['id'],
+                    'username':     s['username'],
+                    'department':   s['department'],
+                    'shift':        s['shift'],
+                    'status':       status,
+                    'current_page': act['current_page'],
+                    'ip_addr':      act['ip_addr'],
+                    'last_seen':    ago,
+                    'last_active':  last_active,
+                })
+            else:
+                result.append({
+                    'user_id':      s['id'],
+                    'username':     s['username'],
+                    'department':   s['department'],
+                    'shift':        s['shift'],
+                    'status':       'offline',
+                    'current_page': '—',
+                    'ip_addr':      '—',
+                    'last_seen':    'Never',
+                    'last_active':  '—',
+                })
+
+        # Summary counts
+        summary = {
+            'active':  sum(1 for r in result if r['status'] == 'active'),
+            'idle':    sum(1 for r in result if r['status'] == 'idle'),
+            'offline': sum(1 for r in result if r['status'] == 'offline'),
+            'total':   len(result),
+        }
+
+        return jsonify({'staff': result, 'summary': summary, 'updated': now.strftime('%H:%M:%S')})
+
+    except Exception as e:
+        logger.error(f"Activity fetch error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/activity')
+def admin_activity():
+    """Live activity monitor page"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+    return render_template('activity.html')
+
+
 @app.route('/api/status')
 def api_status():
     today       = today_str()
