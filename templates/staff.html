@@ -110,7 +110,7 @@
               {% for row in roster %}
               <tr>
                 <td>
-                  <div class="fw-500">{{ row.nickname or row.full_name or row.username }}</div>
+                  <div class="fw-500">{{ row.full_name or row.username }}</div>
                   <div class="text-xs text-muted">{{ row.username }}</div>
                 </td>
                 <td class="hide-mobile"><span class="badge badge-gray">{{ row.department }}</span></td>

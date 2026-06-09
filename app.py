@@ -126,7 +126,6 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN full_name TEXT DEFAULT ''")
-    _safe_alter(conn, "ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
 
     conn.commit()
     conn.close()
@@ -153,7 +152,7 @@ def get_todays_roster():
     today = today_str()
     conn  = get_db_connection()
     roster = conn.execute('''
-        SELECT u.username, u.full_name, u.nickname, u.department, u.shift, u.weekoff,
+        SELECT u.username, u.full_name, u.department, u.shift, u.weekoff,
                a.clock_in, a.clock_out, a.status
         FROM   users u
         LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
@@ -516,13 +515,13 @@ def verify_pin():
     session['department'] = pending.get('department')
     session['role']       = pending.get('role')
 
-    # Store display name (nickname > full_name > username)
+    # Store display name (full_name > username)
     try:
         conn = get_db_connection()
-        urow = conn.execute("SELECT full_name, nickname FROM users WHERE id=?", (pending.get('user_id'),)).fetchone()
+        urow = conn.execute("SELECT full_name FROM users WHERE id=?", (pending.get('user_id'),)).fetchone()
         conn.close()
         if urow:
-            session['display_name'] = urow['nickname'] or urow['full_name'] or username
+            session['display_name'] = urow['full_name'] or username
         else:
             session['display_name'] = username
     except Exception:
@@ -706,7 +705,7 @@ def admin_dashboard():
     today_day = ist_now().strftime('%A')
     conn  = get_db_connection()
     users = conn.execute(
-        "SELECT id, username, full_name, nickname, department, shift, weekoff FROM users WHERE role != 'Admin' ORDER BY department, username"
+        "SELECT id, username, full_name, department, shift, weekoff FROM users WHERE role != 'Admin' ORDER BY department, username"
     ).fetchall()
     announcements = conn.execute(
         "SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20"
@@ -833,7 +832,6 @@ def admin_action():
             new_user  = request.form.get('new_username', '').strip()
             new_pass  = request.form.get('new_password', '')
             full_name = request.form.get('full_name', '').strip()
-            nickname  = request.form.get('nickname', '').strip()
             dept      = request.form.get('department', '')
             weekoff   = request.form.get('weekoff', 'Sunday')
 
@@ -844,8 +842,8 @@ def admin_action():
             else:
                 try:
                     conn.execute(
-                        "INSERT INTO users (username, password, full_name, nickname, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                        (new_user, generate_password_hash(new_pass), full_name, nickname,
+                        "INSERT INTO users (username, password, full_name, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (new_user, generate_password_hash(new_pass), full_name,
                          dept, 'Staff', '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
                     )
                     log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
@@ -942,12 +940,11 @@ def admin_action():
         elif action_type == 'update_profile':
             target    = request.form.get('target_user', '').strip()
             full_name = request.form.get('full_name', '').strip()
-            nickname  = request.form.get('nickname', '').strip()
             conn.execute(
-                "UPDATE users SET full_name=?, nickname=? WHERE username=?",
-                (full_name, nickname, target)
+                "UPDATE users SET full_name=? WHERE username=?",
+                (full_name, target)
             )
-            log_audit('PROFILE_UPDATED', f"{target}: {full_name} / {nickname}", session['user_id'])
+            log_audit('PROFILE_UPDATED', f"{target}: {full_name}", session['user_id'])
             flash(f"✅ Profile updated for '{target}'.")
 
         elif action_type == 'update_company':
@@ -986,7 +983,7 @@ def export_excel(report_type):
     target_user = request.args.get('target_user', 'All')
     conn = get_db_connection()
     df   = pd.read_sql_query('''
-        SELECT u.username, u.full_name, u.nickname, u.department, u.shift, u.weekoff,
+        SELECT u.username, u.full_name, u.department, u.shift, u.weekoff,
                a.date, a.clock_in, a.clock_out, a.status
         FROM   attendance a
         JOIN   users u ON a.user_id = u.id
@@ -1174,7 +1171,7 @@ def get_activity():
 
         # Get all staff
         staff = conn.execute(
-            "SELECT id, username, full_name, nickname, department, shift FROM users WHERE role != 'Admin' ORDER BY department, username"
+            "SELECT id, username, full_name, department, shift FROM users WHERE role != 'Admin' ORDER BY department, username"
         ).fetchall()
 
         # Get activity logs
