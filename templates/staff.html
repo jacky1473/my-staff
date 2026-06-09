@@ -7,7 +7,7 @@
   <div class="topbar-brand">🏢 {{ company_name }} <span>/ Dashboard</span></div>
   <div class="topbar-right">
     <span class="topbar-clock" id="liveClock">--:--:--</span>
-    <span class="topbar-user">{{ session['username'] }}</span>
+    <span class="topbar-user">{{ session.get('display_name') or session['username'] }}</span>
     <button id="theme-toggle" class="theme-btn" title="Toggle theme">🌙</button>
     <a href="/logout" class="btn btn-ghost btn-sm">Sign out</a>
   </div>
@@ -23,7 +23,7 @@
 
   <div class="page-header">
     <div>
-      <div class="page-title">Good day, {{ session['username'] }}</div>
+      <div class="page-title">Good day, {{ session.get('display_name') or session['username'] }}</div>
       <div class="page-subtitle">
         <span class="badge badge-gray">{{ user_shift }}</span>
         <span class="badge badge-gray ms-1">Day off: {{ user_weekoff }}</span>
@@ -109,7 +109,10 @@
             <tbody>
               {% for row in roster %}
               <tr>
-                <td class="fw-500">{{ row.username }}</td>
+                <td>
+                  <div class="fw-500">{{ row.nickname or row.full_name or row.username }}</div>
+                  <div class="text-xs text-muted">{{ row.username }}</div>
+                </td>
                 <td class="hide-mobile"><span class="badge badge-gray">{{ row.department }}</span></td>
                 <td>
                   {% if row.status == 'Leave' %}<span class="badge badge-amber">Leave</span>

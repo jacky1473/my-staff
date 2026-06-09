@@ -125,6 +125,8 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN full_name TEXT DEFAULT ''")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
 
     conn.commit()
     conn.close()
@@ -151,7 +153,7 @@ def get_todays_roster():
     today = today_str()
     conn  = get_db_connection()
     roster = conn.execute('''
-        SELECT u.username, u.department, u.shift, u.weekoff,
+        SELECT u.username, u.full_name, u.nickname, u.department, u.shift, u.weekoff,
                a.clock_in, a.clock_out, a.status
         FROM   users u
         LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
@@ -514,6 +516,18 @@ def verify_pin():
     session['department'] = pending.get('department')
     session['role']       = pending.get('role')
 
+    # Store display name (nickname > full_name > username)
+    try:
+        conn = get_db_connection()
+        urow = conn.execute("SELECT full_name, nickname FROM users WHERE id=?", (pending.get('user_id'),)).fetchone()
+        conn.close()
+        if urow:
+            session['display_name'] = urow['nickname'] or urow['full_name'] or username
+        else:
+            session['display_name'] = username
+    except Exception:
+        session['display_name'] = username
+
     log_audit('LOGIN_SUCCESS', f"Role: {pending.get('role')}", pending.get('user_id'))
     logger.info("Login successful: %s (%s)", username, pending.get('role'))
     flash("✅ Logged in successfully!", "success")
@@ -692,7 +706,7 @@ def admin_dashboard():
     today_day = ist_now().strftime('%A')
     conn  = get_db_connection()
     users = conn.execute(
-        "SELECT id, username, department, shift, weekoff FROM users WHERE role != 'Admin' ORDER BY department, username"
+        "SELECT id, username, full_name, nickname, department, shift, weekoff FROM users WHERE role != 'Admin' ORDER BY department, username"
     ).fetchall()
     announcements = conn.execute(
         "SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20"
@@ -816,10 +830,12 @@ def admin_action():
 
     try:
         if action_type == 'add_user':
-            new_user = request.form.get('new_username', '').strip()
-            new_pass = request.form.get('new_password', '')
-            dept     = request.form.get('department', '')
-            weekoff  = request.form.get('weekoff', 'Sunday')
+            new_user  = request.form.get('new_username', '').strip()
+            new_pass  = request.form.get('new_password', '')
+            full_name = request.form.get('full_name', '').strip()
+            nickname  = request.form.get('nickname', '').strip()
+            dept      = request.form.get('department', '')
+            weekoff   = request.form.get('weekoff', 'Sunday')
 
             if not new_user or not new_pass or dept not in ALLOWED_DEPARTMENTS:
                 flash("Invalid input.")
@@ -828,9 +844,9 @@ def admin_action():
             else:
                 try:
                     conn.execute(
-                        "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
-                        (new_user, generate_password_hash(new_pass), dept, 'Staff',
-                         '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
+                        "INSERT INTO users (username, password, full_name, nickname, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (new_user, generate_password_hash(new_pass), full_name, nickname,
+                         dept, 'Staff', '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
                     )
                     log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
                     flash(f"✅ Employee '{new_user}' created.")
@@ -923,6 +939,17 @@ def admin_action():
             else:
                 flash("Invalid ID.")
 
+        elif action_type == 'update_profile':
+            target    = request.form.get('target_user', '').strip()
+            full_name = request.form.get('full_name', '').strip()
+            nickname  = request.form.get('nickname', '').strip()
+            conn.execute(
+                "UPDATE users SET full_name=?, nickname=? WHERE username=?",
+                (full_name, nickname, target)
+            )
+            log_audit('PROFILE_UPDATED', f"{target}: {full_name} / {nickname}", session['user_id'])
+            flash(f"✅ Profile updated for '{target}'.")
+
         elif action_type == 'update_company':
             new_name = request.form.get('company_name', '').strip()
             if not new_name:
@@ -959,7 +986,7 @@ def export_excel(report_type):
     target_user = request.args.get('target_user', 'All')
     conn = get_db_connection()
     df   = pd.read_sql_query('''
-        SELECT u.username, u.department, u.shift, u.weekoff,
+        SELECT u.username, u.full_name, u.nickname, u.department, u.shift, u.weekoff,
                a.date, a.clock_in, a.clock_out, a.status
         FROM   attendance a
         JOIN   users u ON a.user_id = u.id
@@ -1147,7 +1174,7 @@ def get_activity():
 
         # Get all staff
         staff = conn.execute(
-            "SELECT id, username, department, shift FROM users WHERE role != 'Admin' ORDER BY department, username"
+            "SELECT id, username, full_name, nickname, department, shift FROM users WHERE role != 'Admin' ORDER BY department, username"
         ).fetchall()
 
         # Get activity logs
@@ -1275,42 +1302,60 @@ def agent_launch():
 
 @app.route('/download-agent')
 def download_agent():
-    """Serve a personalized .bat file for this logged-in staff member"""
+    """Serve a personalized .bat file — fixes VBS pythonw path issue"""
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    username = session['username']
-    password_hint = "your-password"  # Staff enters it themselves
+    username  = session['username']
+    server    = f"{request.scheme}://{request.host}"
+    url       = f"{server}/agent-script?u={username}"
 
-    # Detect server IP from request
-    server_ip = request.host
-    scheme    = request.scheme
-
-    # Build bat content line by line to avoid string escaping issues
-    lines = [
-        '@echo off',
-        f':: StaffPortal Activity Agent for {username}',
-        'set AGENT_DIR=%APPDATA%\\StaffAgent',
-        f'set SERVER={scheme}://{server_ip}',
-        f'set USERNAME={username}',
-        'mkdir "%AGENT_DIR%" 2>nul',
-        f'powershell -WindowStyle Hidden -Command "Invoke-WebRequest -Uri \'{scheme}://{server_ip}/agent-script?u={username}\' -OutFile \'%AGENT_DIR%\\agent.py\'"',
-        'if not exist "%AGENT_DIR%\\agent.py" (echo Failed & pause & exit /b 1)',
-        'echo Set objShell = WScript.CreateObject("WScript.Shell") > "%AGENT_DIR%\\launch.vbs"',
-        'echo objShell.Run "pythonw.exe " ^& chr(34) ^& "%AGENT_DIR%\\agent.py" ^& chr(34) ^& "", 0, False >> "%AGENT_DIR%\\launch.vbs"',
-        'copy /y "%AGENT_DIR%\\launch.vbs" "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\StaffPortalAgent.vbs" >nul',
-        'start "" /b wscript.exe "%AGENT_DIR%\\launch.vbs"',
-        'exit',
+    # Build bat using triple-quoted string — avoids escaping issues
+    bat_lines = [
+        "@echo off",
+        f":: StaffPortal Agent for {username}",
+        "setlocal EnableDelayedExpansion",
+        "set AGENT_DIR=%APPDATA%\\StaffAgent",
+        "mkdir \"%AGENT_DIR%\" 2>nul",
+        "",
+        ":: Find Python full path",
+        "set PYTHONW=",
+        "for /f \"delims=\" %%i in (\'where pythonw.exe 2^>nul\') do if \"!PYTHONW!\"==\"\" set PYTHONW=%%i",
+        "if \"%PYTHONW%\"==\"\" for /f \"delims=\" %%i in (\'where python.exe 2^>nul\') do if \"!PYTHONW!\"==\"\" set PYTHONW=%%i",
+        "if \"%PYTHONW%\"==\"\" (",
+        "  echo Python not found. Install Python 3 first.",
+        "  pause",
+        "  exit /b 1",
+        ")",
+        "",
+        ":: Download agent script from server",
+        f'powershell -Command \"(New-Object Net.WebClient).DownloadFile(\'{url}\', \'%AGENT_DIR%\\\\agent.py\')\"',
+        "if not exist \"%AGENT_DIR%\\agent.py\" (",
+        "  echo Download failed. Check network.",
+        "  pause",
+        "  exit /b 1",
+        ")",
+        "",
+        ":: Write VBS launcher using full Python path",
+        "(",
+        "echo Set objShell = WScript.CreateObject^(\"WScript.Shell\"^)",
+        "echo objShell.Run Chr^(34^) ^& \"%PYTHONW%\" ^& Chr^(34^) ^& \" \" ^& Chr^(34^) ^& \"%AGENT_DIR%\\agent.py\" ^& Chr^(34^), 0, False",
+        ") > \"%AGENT_DIR%\\launch.vbs\"",
+        "",
+        ":: Add to Windows Startup",
+        "copy /y \"%AGENT_DIR%\\launch.vbs\" \"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\StaffPortalAgent.vbs\" >nul",
+        "",
+        ":: Start agent now",
+        "wscript.exe \"%AGENT_DIR%\\launch.vbs\"",
+        "exit",
     ]
-    bat_content = '\r\n'.join(lines)
+    bat = "\r\n".join(bat_lines)
 
     from flask import Response
     return Response(
-        bat_content,
+        bat,
         mimetype='application/octet-stream',
-        headers={
-            'Content-Disposition': f'attachment; filename=start_agent_{username}.bat'
-        }
+        headers={'Content-Disposition': f'attachment; filename=start_agent_{username}.bat'}
     )
 
 

@@ -71,7 +71,9 @@
           <div class="section-label">Add Employee</div>
           <form action="/admin_action" method="POST" class="mb-3" novalidate>
             <input type="hidden" name="action_type" value="add_user">
-            <div class="form-group"><input type="text" name="new_username" class="form-control" placeholder="Username" required></div>
+            <div class="form-group"><input type="text" name="new_username" class="form-control" placeholder="Username (login ID)" required></div>
+            <div class="form-group"><input type="text" name="full_name" class="form-control" placeholder="Full Name (e.g. John Smith)"></div>
+            <div class="form-group"><input type="text" name="nickname" class="form-control" placeholder="Nick Name (e.g. John)"></div>
             <div class="form-group"><input type="password" name="new_password" class="form-control" placeholder="Password" required minlength="6"></div>
             <div class="form-group">
               <select name="department" class="form-select" required>
@@ -140,6 +142,21 @@
               </select>
             </div>
             <button type="submit" class="btn btn-secondary btn-sm btn-block">Apply</button>
+          </form>
+          <hr class="divider">
+
+          <!-- Update Profile Names -->
+          <div class="section-label">Update Employee Names</div>
+          <form action="/admin_action" method="POST" class="mb-3">
+            <input type="hidden" name="action_type" value="update_profile">
+            <div class="form-group">
+              <select name="target_user" class="form-select">
+                {% for u in users %}<option>{{ u.username }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="form-group"><input type="text" name="full_name" class="form-control" placeholder="Full Name"></div>
+            <div class="form-group"><input type="text" name="nickname" class="form-control" placeholder="Nick Name"></div>
+            <button type="submit" class="btn btn-secondary btn-sm btn-block">Update Names</button>
           </form>
           <hr class="divider">
 
@@ -260,7 +277,10 @@
             <tbody>
               {% for row in roster %}
               <tr>
-                <td class="fw-500">{{ row.username }}</td>
+                <td>
+                  <div class="fw-500">{{ row.nickname or row.full_name or row.username }}</div>
+                  <div class="text-xs text-muted">{{ row.username }}</div>
+                </td>
                 <td><span class="badge badge-gray">{{ row.department }}</span></td>
                 <td class="hide-mobile text-xs text-muted">{{ row.shift }}</td>
                 <td>
