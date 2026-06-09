@@ -1,116 +1,58 @@
 {% extends "base.html" %}
-
-{% block title %}System Admin — {{ company_name }}{% endblock %}
-
+{% block title %}System — {{ company_name }}{% endblock %}
 {% block body %}
-<div style="max-width: 1000px; margin: 0 auto; padding: 1.25rem;">
-
-  <div class="page-header">
-    <div>
-      <div class="page-title">⚙️ System Administration</div>
-      <p class="page-subtitle">Server status & backup management</p>
-    </div>
-    <a href="/admin" class="btn btn-secondary-glow">← Back to Admin</a>
-  </div>
-
-  {% with messages = get_flashed_messages() %}
-    {% if messages %}
-      {% for msg in messages %}
-        <div class="flash-alert alert {% if '✅' in msg %}alert-success{% else %}alert-danger{% endif %}" role="alert">{{ msg }}</div>
-      {% endfor %}
-    {% endif %}
-  {% endwith %}
-
-  <!-- Server Status Cards -->
-  <div class="row g-3 mb-4">
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ System</span></div>
+  <div class="topbar-right"><button id="theme-toggle" class="theme-btn">🌙</button><a href="/admin" class="btn btn-ghost btn-sm">← Admin</a></div>
+</div>
+<div class="page-wrap">
+  <div class="page-header"><div class="page-title">System Administration</div></div>
+  {% with messages = get_flashed_messages() %}{% if messages %}{% for msg in messages %}
+    <div class="flash-alert alert alert-success py-2 mb-3" style="font-size:.8rem;">{{ msg }}</div>
+  {% endfor %}{% endif %}{% endwith %}
+  <div class="row g-3 mb-3">
     <div class="col-md-6">
-      <div class="elevated-card p-4">
-        <div class="stat-number" style="color: var(--accent-cyan); font-size: 1.5rem;">🖥️ Server Status</div>
-        <div class="mt-3">
-          <div class="mb-2">
-            <small class="section-label">Database Size</small>
-            <div class="mb-1">{{ "%.2f"|format(db_size) }} MB</div>
-            <div class="progress-wrap">
-              <div class="progress-bar-premium" style="width: {{ [db_size / 1000 * 100, 100] | min }}%"></div>
-            </div>
-          </div>
-          <div class="mb-2">
-            <small class="section-label">Registered Staff</small>
-            <div class="fw-bold" style="font-size: 1.5rem;">{{ user_count }}</div>
-          </div>
-          <div>
-            <span class="badge badge-status status-online">🟢 System Running</span>
-          </div>
+      <div class="card card-sm">
+        <div class="card-title">Server Status</div>
+        <div class="d-flex flex-column gap-2">
+          <div class="d-flex justify-content-between text-sm"><span class="text-muted">Database Size</span><span class="mono">{{ "%.2f"|format(db_size) }} MB</span></div>
+          <div class="d-flex justify-content-between text-sm"><span class="text-muted">Staff Count</span><span class="fw-500">{{ user_count }}</span></div>
+          <div class="d-flex justify-content-between text-sm"><span class="text-muted">Status</span><span class="badge badge-green"><span class="dot dot-green dot-pulse"></span> Running</span></div>
         </div>
       </div>
     </div>
-
     <div class="col-md-6">
-      <div class="elevated-card p-4">
-        <div class="stat-number" style="color: var(--accent-lime); font-size: 1.5rem;">💾 Backup Info</div>
-        <div class="mt-3">
-          <div class="mb-2">
-            <small class="section-label">Total Backups</small>
-            <div class="fw-bold" style="font-size: 1.5rem;">{{ backups | length }}</div>
-          </div>
-          <form action="/admin/backup" method="POST" style="margin-top: 1rem;">
-            <button type="submit" class="btn btn-primary-glow w-100">💾 Create Backup Now</button>
-          </form>
-        </div>
+      <div class="card card-sm">
+        <div class="card-title">Backup</div>
+        <div class="d-flex justify-content-between text-sm mb-3"><span class="text-muted">Saved Backups</span><span class="fw-500">{{ backups|length }}</span></div>
+        <form action="/admin/backup" method="POST">
+          <button type="submit" class="btn btn-primary btn-sm btn-block">Create Backup Now</button>
+        </form>
       </div>
     </div>
   </div>
-
-  <!-- Backup Management -->
-  <div class="elevated-card p-4">
-    <h3 class="page-subtitle mb-3">📋 Backup History (Last 7)</h3>
-    
+  <div class="card card-sm">
+    <div class="card-title">Backup History</div>
     {% if backups %}
-      <div class="table-responsive">
-        <table class="table-premium">
-          <thead>
-            <tr>
-              <th>Date & Time</th>
-              <th>File Size</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for backup in backups %}
-            <tr>
-              <td class="fw-bold">{{ backup.mtime }}</td>
-              <td>{{ "%.1f"|format(backup.size / (1024*1024)) }} MB</td>
-              <td>
-                <form action="/admin/restore/{{ backup.filename }}" method="POST" style="display: inline;">
-                  <button type="submit" class="btn btn-sm btn-secondary-glow" onclick="return confirm('Restore database from {{ backup.mtime }}? This will overwrite current data.')">
-                    ↩️ Restore
-                  </button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="text-center text-muted py-4">
-        <p>No backups yet. Create one above!</p>
-      </div>
-    {% endif %}
-  </div>
-
-  <!-- Instructions -->
-  <div class="elevated-card p-4 mt-4">
-    <h4 class="page-subtitle mb-2">📖 How Backups Work</h4>
-    <div style="color: var(--text-secondary); line-height: 1.6; font-size: 0.95rem;">
-      <p>✅ <strong>Automatic Backups:</strong> System creates automatic backups on startup and shutdown.</p>
-      <p>✅ <strong>Manual Backups:</strong> Click "Create Backup Now" button anytime.</p>
-      <p>✅ <strong>Storage:</strong> Backups stored in <code style="background: rgba(255,255,255,0.1); padding: 0.25rem 0.5rem; border-radius: 3px;">./backups</code> folder.</p>
-      <p>✅ <strong>Retention:</strong> Last 7 backups kept automatically. Older ones deleted.</p>
-      <p>⚠️ <strong>Restore:</strong> Clicking "Restore" will overwrite current database. Confirm carefully!</p>
-      <p>💾 <strong>Backup Location:</strong> You should copy the <code style="background: rgba(255,255,255,0.1); padding: 0.25rem 0.5rem; border-radius: 3px;">./backups</code> folder to USB drive or network location for safety.</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Timestamp</th><th>Size</th><th>Action</th></tr></thead>
+        <tbody>
+          {% for b in backups %}
+          <tr>
+            <td class="mono text-sm">{{ b.mtime }}</td>
+            <td class="text-xs text-muted">{{ "%.1f"|format(b.size/1024/1024) }} MB</td>
+            <td>
+              <form action="/admin/restore/{{ b.filename }}" method="POST" style="display:inline;">
+                <button type="submit" class="btn btn-secondary btn-sm" onclick="return confirm('Restore from {{ b.mtime }}?')">Restore</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
+    {% else %}<div class="empty-state">No backups yet.</div>{% endif %}
   </div>
-
 </div>
 {% endblock %}

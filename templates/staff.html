@@ -1,121 +1,87 @@
 {% extends "base.html" %}
-
 {% block title %}Dashboard — {{ company_name }}{% endblock %}
-
-{% block head %}
-<style>
-  .dashboard-container { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
-  @media (max-width: 767px) {
-    .dashboard-container { padding: 1rem 0.75rem; }
-    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-  }
-  @media (min-width: 768px) {
-    .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-  }
-  .clock-box { background: linear-gradient(135deg, rgba(0,217,255,0.1), rgba(57,255,20,0.05)); }
-</style>
-{% endblock %}
-
 {% block body %}
-<div class="dashboard-container">
 
-  <!-- Page Header -->
+<!-- Topbar -->
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Dashboard</span></div>
+  <div class="topbar-right">
+    <span class="topbar-clock" id="liveClock">--:--:--</span>
+    <span class="topbar-user">{{ session['username'] }}</span>
+    <button id="theme-toggle" class="theme-btn" title="Toggle theme">🌙</button>
+    <a href="/logout" class="btn btn-ghost btn-sm">Sign out</a>
+  </div>
+</div>
+
+<div class="page-wrap">
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}{% for msg in messages %}
+      <div class="flash-alert alert alert-success py-2 mt-2" style="font-size:.8rem;">{{ msg }}</div>
+    {% endfor %}{% endif %}
+  {% endwith %}
+
   <div class="page-header">
     <div>
-      <div class="page-title">Welcome, {{ session['username'] }}</div>
-      <p class="page-subtitle" style="margin-top: 0.5rem;">
-        <span class="badge badge-status status-online">
-          <span class="status-dot"></span>
-          {{ user_shift }}
-        </span>
-        <span class="badge badge-status status-away" style="margin-left: 0.5rem;">
-          📅 {{ user_weekoff }} Off
-        </span>
-      </p>
-    </div>
-    <div class="d-flex gap-2" style="flex-wrap: wrap;">
-      <div class="elevated-card clock-box p-3" style="border: 1px solid var(--glass-border); border-radius: 0.75rem;">
-        <div id="liveClock">--:--:-- IST</div>
+      <div class="page-title">Good day, {{ session['username'] }}</div>
+      <div class="page-subtitle">
+        <span class="badge badge-gray">{{ user_shift }}</span>
+        <span class="badge badge-gray ms-1">Day off: {{ user_weekoff }}</span>
       </div>
-      <button id="theme-toggle" class="theme-toggle"></button>
-      <a href="/logout" class="btn btn-danger-glow" style="padding: 0.65rem 1.25rem;">Logout</a>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="/staff/history" class="btn btn-secondary btn-sm">View History</a>
     </div>
   </div>
-
-  <!-- Flash Alerts -->
-  {% with messages = get_flashed_messages() %}
-    {% if messages %}
-      {% for msg in messages %}
-        <div class="flash-alert alert alert-success" role="alert">{{ msg }}</div>
-      {% endfor %}
-    {% endif %}
-  {% endwith %}
 
   <!-- Announcements -->
   {% if announcements %}
   <div class="mb-3">
-    <h3 class="page-subtitle">📢 Announcements</h3>
     {% for ann in announcements %}
-      <div class="announcement-banner {{ ann.priority }}">
-        <div class="announcement-title">
-          {% if ann.priority == 'urgent' %}🔴{% elif ann.priority == 'high' %}🟠{% else %}🔵{% endif %}
-          {{ ann.title }}
-        </div>
-        <div class="announcement-body">{{ ann.body }}</div>
-        <div class="announcement-meta">{{ ann.created_at[:10] }} • by {{ ann.created_by }}</div>
-      </div>
+    <div class="ann-item {{ ann.priority }}">
+      <div class="ann-title">{{ ann.title }}</div>
+      <div class="ann-body">{{ ann.body }}</div>
+      <div class="ann-meta">{{ ann.created_at[:10] }} · {{ ann.created_by }}</div>
+    </div>
     {% endfor %}
   </div>
   {% endif %}
 
-  <div class="row g-3 mb-4">
-    <!-- Clock Section -->
-    <div class="col-lg-5 col-md-12">
-      <div class="elevated-card p-4">
-        <h3 class="page-subtitle mb-4 text-center">⏱️ Shift Clock</h3>
-        <form action="/clock" method="POST" class="d-grid gap-2">
-          <button type="submit" name="action" value="in" class="btn btn-clock-in">
-            ✅ Clock IN
-          </button>
-          <button type="submit" name="action" value="out" class="btn btn-clock-out">
-            🚪 Clock OUT
-          </button>
+  <div class="row g-3">
+
+    <!-- Clock In/Out -->
+    <div class="col-lg-4">
+      <div class="card card-sm mb-3">
+        <div class="card-title">Attendance</div>
+        <form action="/clock" method="POST" class="d-flex flex-column gap-2">
+          <button type="submit" name="action" value="in" class="btn btn-clockin btn-block">Clock In</button>
+          <button type="submit" name="action" value="out" class="btn btn-clockout btn-block">Clock Out</button>
         </form>
       </div>
 
-      <!-- Personal Logs -->
-      <div class="elevated-card p-4 mt-3">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="page-subtitle mb-0">📋 Your Recent Logs</h5>
-          <a href="/staff/history" class="btn btn-secondary-glow btn-sm">View All</a>
-        </div>
-        <div class="table-responsive">
-          <table class="table-premium table-sm">
-            <thead>
-              <tr><th>Date</th><th>In</th><th>Out</th><th>Status</th></tr>
-            </thead>
+      <!-- Recent Logs -->
+      <div class="card card-sm">
+        <div class="card-title">Recent Activity</div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Date</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
             <tbody>
               {% for log in logs %}
               <tr>
-                <td style="font-size: 0.85rem;">{{ log.date }}</td>
-                <td class="text-success fw-bold" style="font-size: 0.85rem;">{{ log.clock_in or '—' }}</td>
-                <td class="text-warning fw-bold" style="font-size: 0.85rem;">{{ log.clock_out or '—' }}</td>
-                <td style="font-size: 0.85rem;">
-                  {% if log.status == 'Leave' %}
-                    <span class="badge badge-status status-away">Leave</span>
-                  {% elif log.status == 'Late' %}
-                    <span class="badge badge-status status-away">Late</span>
-                  {% elif log.status == 'Absent' %}
-                    <span class="badge badge-status status-absent">Absent</span>
-                  {% elif log.clock_in %}
-                    <span class="badge badge-status status-online">Present</span>
-                  {% else %}
-                    <span class="badge bg-secondary">—</span>
+                <td class="mono text-xs">{{ log.date }}</td>
+                <td class="text-green mono text-xs">{{ log.clock_in or '—' }}</td>
+                <td class="text-amber mono text-xs">{{ log.clock_out or '—' }}</td>
+                <td>
+                  {% if log.status == 'Leave' %}<span class="badge badge-amber">Leave</span>
+                  {% elif log.status == 'Absent' %}<span class="badge badge-red">Absent</span>
+                  {% elif log.status == 'Late' %}<span class="badge badge-amber">Late</span>
+                  {% elif log.clock_in %}<span class="badge badge-green">Present</span>
+                  {% else %}<span class="badge badge-gray">—</span>
                   {% endif %}
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-4">No records yet.</td></tr>
+              <tr><td colspan="4" class="empty-state py-3">No records yet</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -124,81 +90,63 @@
     </div>
 
     <!-- Team Roster -->
-    <div class="col-lg-7 col-md-12">
-      <div class="elevated-card p-4">
+    <div class="col-lg-8">
+      <div class="card card-sm">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="page-subtitle mb-0">🏢 Team Presence</h5>
-          <span class="badge bg-secondary" id="refreshBadge">60s</span>
+          <div class="card-title mb-0">Team Presence</div>
+          <span class="badge badge-gray" id="refreshBadge">60s</span>
         </div>
-        <div class="table-responsive">
-          <table class="table-premium table-sm" id="rosterTable">
+        <div class="table-wrap">
+          <table class="table" id="rosterTable">
             <thead>
-              <tr><th>Name</th><th class="d-none d-md-table-cell">Dept</th><th class="d-none d-lg-table-cell">Shift</th><th>Status</th><th>In</th></tr>
+              <tr>
+                <th>Name</th>
+                <th class="hide-mobile">Department</th>
+                <th>Status</th>
+                <th>Clock In</th>
+              </tr>
             </thead>
             <tbody>
               {% for row in roster %}
               <tr>
-                <td class="fw-bold" style="font-size: 0.9rem;">{{ row.username }}</td>
-                <td class="d-none d-md-table-cell" style="font-size: 0.85rem;"><span class="badge bg-secondary">{{ row.department }}</span></td>
-                <td class="d-none d-lg-table-cell" style="font-size: 0.8rem;">{{ row.shift }}</td>
-                <td style="font-size: 0.85rem;">
-                  {% if row.status == 'Leave' %}
-                    <span class="badge badge-status status-away">Leave</span>
-                  {% elif row.status == 'Absent' %}
-                    <span class="badge badge-status status-absent">Absent</span>
-                  {% elif row.weekoff == today_day and not row.clock_in %}
-                    <span class="badge bg-secondary">Week Off</span>
-                  {% elif row.clock_in and row.clock_out %}
-                    <span class="badge bg-secondary">Shift Ended</span>
-                  {% elif row.clock_in and not row.clock_out %}
-                    <span class="badge badge-status status-online">In Office</span>
-                  {% else %}
-                    <span class="badge bg-secondary opacity-50">Not Here</span>
+                <td class="fw-500">{{ row.username }}</td>
+                <td class="hide-mobile"><span class="badge badge-gray">{{ row.department }}</span></td>
+                <td>
+                  {% if row.status == 'Leave' %}<span class="badge badge-amber">Leave</span>
+                  {% elif row.status == 'Absent' %}<span class="badge badge-red">Absent</span>
+                  {% elif row.status == 'Late' %}<span class="badge badge-amber">Late</span>
+                  {% elif row.weekoff == today_day and not row.clock_in %}<span class="badge badge-gray">Day Off</span>
+                  {% elif row.clock_in and row.clock_out %}<span class="badge badge-gray">Done</span>
+                  {% elif row.clock_in %}<span class="badge badge-green"><span class="dot dot-green dot-pulse"></span> In Office</span>
+                  {% else %}<span class="badge badge-gray">Not In</span>
                   {% endif %}
                 </td>
-                <td class="text-success fw-bold" style="font-size: 0.85rem;">{{ row.clock_in or '—' }}</td>
+                <td class="mono text-xs text-green">{{ row.clock_in or '—' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="5" class="text-center text-muted py-4">No staff found.</td></tr>
+              <tr><td colspan="4" class="empty-state py-3">No staff found</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
       </div>
     </div>
-  </div>
 
+  </div>
 </div>
 
-<!-- Mobile Bottom Nav -->
-<nav class="mobile-bottom-nav">
-  <a href="/staff" data-target="clock" class="active">
-    <span class="nav-icon">⏱️</span>
-    <span>Clock</span>
-  </a>
-  <a href="/staff/history" data-target="history">
-    <span class="nav-icon">📋</span>
-    <span>History</span>
-  </a>
-  <a href="/staff" data-target="team">
-    <span class="nav-icon">🏢</span>
-    <span>Team</span>
-  </a>
-  <a href="/logout" data-target="logout">
-    <span class="nav-icon">🚪</span>
-    <span>Logout</span>
-  </a>
+<!-- Mobile nav -->
+<nav class="mobile-nav">
+  <a href="/staff" class="active"><span class="icon">⊞</span>Home</a>
+  <a href="/staff/history"><span class="icon">☰</span>History</a>
+  <a href="/logout"><span class="icon">→</span>Sign Out</a>
 </nav>
 
 {% endblock %}
-
 {% block scripts %}
 <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    initClock();
-    initAlertToasts();
-    initAutoRefresh();
-    initMobileNav();
-  });
+document.addEventListener('DOMContentLoaded', () => {
+  initClock(); initAlertToasts(); initAutoRefresh(); initMobileNav();
+});
 </script>
 {% endblock %}

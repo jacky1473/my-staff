@@ -1,128 +1,39 @@
 {% extends "base.html" %}
-
 {% block title %}Verify PIN — {{ company_name }}{% endblock %}
-
-{% block head %}
-<style>
-  body { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 1rem; }
-  .pin-wrapper { width: 100%; max-width: 420px; }
-  .pin-card { padding: 2.5rem 1.5rem; text-align: center; }
-  
-  .pin-icon { font-size: 3rem; margin-bottom: 1rem; animation: bounce 2s infinite; }
-  @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-  
-  .pin-display-box { background: linear-gradient(135deg, rgba(0,217,255,0.2), rgba(57,255,20,0.1)); border: 2px solid var(--accent-cyan); border-radius: 0.75rem; padding: 1.5rem; margin: 1.5rem 0; }
-  .pin-code { font-size: 2.5rem; font-weight: 800; letter-spacing: 8px; color: var(--accent-cyan); font-family: 'Monaco', monospace; }
-  .pin-label { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem; text-transform: uppercase; }
-  
-  .pin-input { width: 100%; font-size: 32px; letter-spacing: 10px; text-align: center; }
-  
-  .pin-timer { color: var(--accent-cyan); font-weight: bold; font-size: 1.1rem; margin: 1rem 0; }
-  .pin-timer.critical { color: #ef4444; animation: pulse 1s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-  
-  .pin-notes { background: rgba(57,255,20,0.1); border-left: 3px solid var(--accent-lime); padding: 1rem; border-radius: 0.5rem; margin: 1.5rem 0; text-align: left; }
-  .pin-notes strong { color: var(--accent-lime); }
-  .pin-notes li { margin: 0.4rem 0; font-size: 0.9rem; }
-  
-  @media (max-width: 480px) { .pin-card { padding: 1.5rem 1rem; } .pin-code { font-size: 2rem; letter-spacing: 6px; } }
-</style>
-{% endblock %}
-
 {% block body %}
-<div class="pin-wrapper">
-  <div class="glass-card pin-card">
-    <div class="pin-icon">🔓</div>
-    
-    <h2 class="page-title mb-1">PIN Verification</h2>
-    <p class="page-subtitle">Secure 4-digit PIN required</p>
-
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        {% for msg in messages %}
-          <div class="flash-alert alert alert-danger" role="alert">{{ msg }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
-    <!-- PIN Display -->
-    <div class="pin-display-box">
-      <div class="pin-label">Your PIN (shown on this screen)</div>
-      <div class="pin-code">{{ pin_display }}</div>
-      <div class="pin-label">⚠️ PIN visible only here for security</div>
+<div class="auth-wrap">
+  <div class="auth-card" style="max-width:360px;text-align:center;">
+    <div class="auth-logo" style="justify-content:center;">🔐 Verify PIN</div>
+    {% with messages = get_flashed_messages() %}{% if messages %}{% for msg in messages %}
+      <div class="flash-alert alert alert-danger py-2 mb-3" style="font-size:.8rem;">{{ msg }}</div>
+    {% endfor %}{% endif %}{% endwith %}
+    <div class="card card-sm mb-4" style="background:var(--accent-dim);border-color:var(--accent);">
+      <div class="text-muted text-xs mb-1">Your PIN</div>
+      <div style="font-size:2rem;font-family:var(--font-mono);font-weight:700;letter-spacing:.5rem;color:var(--accent);">{{ pin_display }}</div>
+      <div class="text-muted text-xs mt-1">Expires in 3 minutes</div>
     </div>
-
-    <!-- Enter PIN Form -->
-    <form method="POST" action="/verify-pin" class="mt-2" novalidate>
+    <form method="POST" action="/verify-pin" novalidate>
       <input type="hidden" name="username" value="{{ username }}">
-      
-      <label class="section-label">Enter PIN in field below</label>
-      <input type="text"
-             name="pin"
-             class="form-control pin-input"
-             placeholder="0000"
-             maxlength="4"
-             inputmode="numeric"
-             pattern="[0-9]{4}"
-             required
-             autofocus>
-      
-      <div class="pin-timer" id="timer">⏱️ Expires in 3:00</div>
-
-      <button type="submit" class="btn btn-primary-glow w-100 mt-2">Verify PIN</button>
+      <div class="form-group">
+        <label class="form-label">Enter PIN</label>
+        <input type="text" name="pin" class="form-control pin-input" placeholder="0000" maxlength="4" inputmode="numeric" pattern="[0-9]{4}" required autofocus>
+      </div>
+      <div class="text-muted mb-3 mono" style="font-size:.8rem;" id="timer">Expires in 3:00</div>
+      <button type="submit" class="btn btn-primary btn-block">Verify</button>
     </form>
-
-    <!-- Instructions -->
-    <div class="pin-notes">
-      <strong>🔐 Security Notes:</strong>
-      <ul style="padding-left: 1.5rem; margin: 0;">
-        <li>PIN is displayed only once on this page</li>
-        <li>Do not share your PIN with anyone</li>
-        <li>PIN expires in 3 minutes for security</li>
-        <li>Each login requires a new PIN</li>
-      </ul>
-    </div>
-
-    <hr class="bg-secondary opacity-25 my-3">
-    <p class="text-muted small">
-      Account: <strong>{{ username }}</strong><br>
-      Role: <strong>{{ login_type | upper }}</strong>
-    </p>
+    <div class="mt-3"><a href="/login" style="font-size:.8rem;color:var(--text-muted);">Back to login</a></div>
   </div>
 </div>
-
 {% endblock %}
-
 {% block scripts %}
 <script>
-  // Only allow numbers
-  document.querySelector('input[name="pin"]').addEventListener('input', function(e) {
-    this.value = this.value.replace(/[^0-9]/g, '');
-    // Auto-submit on 4 digits
-    if (this.value.length === 4) {
-      // Optional: auto-submit after brief delay
-      setTimeout(() => this.closest('form').submit(), 100);
-    }
-  });
-
-  // Timer countdown (3 minutes)
-  let timeLeft = 180;
-  const timerEl = document.getElementById('timer');
-  
-  setInterval(() => {
-    timeLeft--;
-    const mins = Math.floor(timeLeft / 60);
-    const secs = timeLeft % 60;
-    timerEl.textContent = `⏱️ Expires in ${mins}:${String(secs).padStart(2, '0')}`;
-    
-    if (timeLeft <= 0) {
-      timerEl.classList.add('pin-timer.critical');
-      timerEl.textContent = '⏰ PIN Expired! Go back to login.';
-      document.querySelector('button').disabled = true;
-      document.querySelector('input[name="pin"]').disabled = true;
-    } else if (timeLeft <= 30) {
-      timerEl.classList.add('critical');
-    }
-  }, 1000);
+document.querySelector('[name=pin]').addEventListener('input',function(){
+  this.value=this.value.replace(/[^0-9]/g,'');
+  if(this.value.length===4) setTimeout(()=>this.closest('form').submit(),80);
+});
+let t=180; const el=document.getElementById('timer');
+setInterval(()=>{t--;const m=Math.floor(t/60),s=t%60;el.textContent=`Expires in ${m}:${String(s).padStart(2,'0')}`;
+if(t<=0){el.textContent='PIN expired';el.style.color='var(--red)';document.querySelector('button').disabled=true;}
+if(t<=30)el.style.color='var(--amber)';},1000);
 </script>
 {% endblock %}

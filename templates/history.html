@@ -1,84 +1,61 @@
 {% extends "base.html" %}
-
-{% block title %}History — {{ company_name }}{% endblock %}
-
+{% block title %}Attendance History — {{ company_name }}{% endblock %}
 {% block body %}
-<div style="max-width: 1000px; margin: 0 auto; padding: 1.25rem;">
-
-  <div class="page-header">
-    <div>
-      <div class="page-title">📋 Your Attendance History</div>
-      <p class="page-subtitle">Complete record on file</p>
-    </div>
-    <a href="/staff" class="btn btn-secondary-glow">← Back to Dashboard</a>
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ History</span></div>
+  <div class="topbar-right">
+    <button id="theme-toggle" class="theme-btn">🌙</button>
+    <a href="/staff" class="btn btn-ghost btn-sm">← Back</a>
   </div>
-
-  <!-- Stats -->
+</div>
+<div class="page-wrap">
   {% set present_count = logs | selectattr('clock_in') | list | length %}
-  {% set absent_count  = logs | selectattr('status', 'equalto', 'Absent') | list | length %}
-  {% set leave_count   = logs | selectattr('status', 'equalto', 'Leave') | list | length %}
-  
-  <div class="row g-3 mb-4">
-    <div class="col-4">
-      <div class="stat-card">
-        <div class="stat-number">{{ present_count }}</div>
-        <div class="stat-label">Present Days</div>
-      </div>
-    </div>
-    <div class="col-4">
-      <div class="stat-card">
-        <div class="stat-number">{{ absent_count }}</div>
-        <div class="stat-label">Absent Days</div>
-      </div>
-    </div>
-    <div class="col-4">
-      <div class="stat-card">
-        <div class="stat-number">{{ leave_count }}</div>
-        <div class="stat-label">Leave Days</div>
-      </div>
-    </div>
+  {% set absent_count  = logs | selectattr('status','equalto','Absent') | list | length %}
+  {% set leave_count   = logs | selectattr('status','equalto','Leave')  | list | length %}
+  {% set late_count    = logs | selectattr('status','equalto','Late')   | list | length %}
+  <div class="page-header">
+    <div><div class="page-title">Attendance History</div><div class="page-subtitle">{{ session['username'] }}</div></div>
   </div>
-
-  <!-- Table -->
-  <div class="elevated-card p-4">
-    <div class="table-responsive">
-      <table class="table-premium">
-        <thead>
-          <tr><th>#</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr>
-        </thead>
+  <div class="stat-grid mb-3">
+    <div class="stat-card green"><div class="stat-value">{{ present_count }}</div><div class="stat-label">Present</div></div>
+    <div class="stat-card amber"><div class="stat-value">{{ late_count }}</div><div class="stat-label">Late</div></div>
+    <div class="stat-card red"><div class="stat-value">{{ absent_count }}</div><div class="stat-label">Absent</div></div>
+    <div class="stat-card"><div class="stat-value">{{ leave_count }}</div><div class="stat-label">Leave</div></div>
+  </div>
+  <div class="card card-sm">
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>#</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr></thead>
         <tbody>
           {% for log in logs %}
           {% if log.clock_in and log.clock_out %}
-            {% set h_in  = log.clock_in.split(':') %}
-            {% set h_out = log.clock_out.split(':') %}
-            {% set mins = (h_out[0]|int * 60 + h_out[1]|int) - (h_in[0]|int * 60 + h_in[1]|int) %}
-            {% set hrs = (mins / 60) | round(1) %}
-          {% else %}
-            {% set hrs = '—' %}
-          {% endif %}
+            {% set i = log.clock_in.split(':') %}{% set o = log.clock_out.split(':') %}
+            {% set hrs = ((o[0]|int*60+o[1]|int)-(i[0]|int*60+i[1]|int))/60 | round(1) %}
+          {% else %}{% set hrs = '—' %}{% endif %}
           <tr>
-            <td style="font-size: 0.85rem; color: var(--text-muted);">{{ loop.index }}</td>
-            <td style="font-weight: 600;">{{ log.date }}</td>
-            <td class="text-success fw-bold">{{ log.clock_in or '—' }}</td>
-            <td class="text-warning fw-bold">{{ log.clock_out or '—' }}</td>
-            <td class="text-primary fw-bold">{{ hrs }}{% if hrs != '—' %}h{% endif %}</td>
+            <td class="text-muted text-xs">{{ loop.index }}</td>
+            <td class="mono text-sm">{{ log.date }}</td>
+            <td class="mono text-xs text-green">{{ log.clock_in or '—' }}</td>
+            <td class="mono text-xs text-amber">{{ log.clock_out or '—' }}</td>
+            <td class="mono text-xs">{{ hrs }}{% if hrs != '—' %}h{% endif %}</td>
             <td>
-              {% if log.status == 'Leave' %}<span class="badge badge-status status-away">Leave</span>
-              {% elif log.status == 'Late' %}
-                    <span class="badge badge-status status-away">Late</span>
-                  {% elif log.status == 'Absent' %}<span class="badge badge-status status-absent">Absent</span>
-              {% elif log.clock_in %}<span class="badge badge-status status-online">Present</span>
-              {% else %}<span class="badge bg-secondary">—</span>
-              {% endif %}
+              {% if log.status == 'Leave' %}<span class="badge badge-amber">Leave</span>
+              {% elif log.status == 'Absent' %}<span class="badge badge-red">Absent</span>
+              {% elif log.status == 'Late' %}<span class="badge badge-amber">Late</span>
+              {% elif log.clock_in %}<span class="badge badge-green">Present</span>
+              {% else %}<span class="badge badge-gray">—</span>{% endif %}
             </td>
           </tr>
-          {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">No records found.</td></tr>
+          {% else %}<tr><td colspan="6" class="empty-state py-3">No records found</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
-
 </div>
+<nav class="mobile-nav">
+  <a href="/staff"><span class="icon">⊞</span>Home</a>
+  <a href="/staff/history" class="active"><span class="icon">☰</span>History</a>
+  <a href="/logout"><span class="icon">→</span>Sign Out</a>
+</nav>
 {% endblock %}

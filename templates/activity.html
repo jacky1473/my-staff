@@ -1,233 +1,85 @@
 {% extends "base.html" %}
-{% block title %}Live Activity Monitor — {{ company_name }}{% endblock %}
-
+{% block title %}Live Activity — {{ company_name }}{% endblock %}
 {% block head %}
 <style>
-  .activity-container { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
-
-  /* Summary cards */
-  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-
-  /* Status badges */
-  .status-pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
-  .status-active  { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
-  .status-idle    { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
-  .status-offline { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
-
-  /* Pulse dot */
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-  .dot-active  { background: #10b981; animation: pulse 1.5s infinite; }
-  .dot-idle    { background: #f59e0b; animation: pulse 3s infinite; }
-  .dot-offline { background: #6b7280; }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.5;transform:scale(1.3);} }
-
-  /* Table row highlight */
-  .row-active  td { background: rgba(16,185,129,0.04); }
-  .row-idle    td { background: rgba(245,158,11,0.04); }
-  .row-offline td { opacity: .65; }
-
-  /* Live badge */
-  .live-badge { display: inline-flex; align-items: center; gap: .4rem; background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3); color: #ef4444; padding: .3rem .7rem; border-radius: 20px; font-size: .75rem; font-weight: 700; }
-
-  /* Refresh bar */
-  .refresh-bar-wrap { height: 3px; background: rgba(255,255,255,.08); border-radius: 2px; margin-bottom: 1rem; overflow: hidden; }
-  .refresh-bar { height: 100%; background: linear-gradient(90deg, var(--accent-cyan), var(--accent-lime)); border-radius: 2px; transition: width .1s linear; }
-
-  /* Page badge */
-  .page-badge { background: rgba(0,217,255,.1); border: 1px solid rgba(0,217,255,.2); color: var(--accent-cyan); padding: .15rem .5rem; border-radius: 4px; font-size: .75rem; font-family: monospace; }
-
-  @media(max-width:767px) {
-    .hide-mobile { display: none; }
-    .summary-grid { grid-template-columns: 1fr 1fr; }
-  }
+.status-active  { background:var(--green-dim); color:var(--green); }
+.status-idle    { background:var(--amber-dim); color:var(--amber); }
+.status-offline { background:var(--gray-dim);  color:var(--text-muted); }
 </style>
 {% endblock %}
-
 {% block body %}
-<div class="activity-container">
-
-  <!-- Header -->
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Live Activity</span></div>
+  <div class="topbar-right">
+    <span class="badge badge-gray mono" style="font-size:.7rem;">Refreshes every 10s</span>
+    <button id="theme-toggle" class="theme-btn">🌙</button>
+    <a href="/admin" class="btn btn-ghost btn-sm">← Admin</a>
+  </div>
+</div>
+<div class="page-wrap">
   <div class="page-header">
     <div>
-      <div class="page-title">👁️ Live Activity Monitor</div>
-      <p class="page-subtitle">
-        Real-time staff tracking &nbsp;
-        <span class="live-badge"><span class="dot dot-active"></span> LIVE</span>
-      </p>
-    </div>
-    <div class="d-flex gap-2 align-items-center" style="flex-wrap:wrap;">
-      <span class="text-muted" style="font-size:.85rem;">Updates every 10s</span>
-      <button id="theme-toggle" class="theme-toggle"></button>
-      <a href="/admin" class="btn btn-secondary-glow">← Admin</a>
+      <div class="page-title">Live Activity Monitor</div>
+      <div class="page-subtitle">Last updated: <span id="lastUpdated" class="mono">—</span></div>
     </div>
   </div>
-
-  <!-- Refresh progress bar -->
-  <div class="refresh-bar-wrap">
-    <div class="refresh-bar" id="refreshBar" style="width:100%"></div>
+  <div class="progress mb-3"><div class="progress-bar" id="refreshBar" style="width:100%"></div></div>
+  <div class="stat-grid mb-3">
+    <div class="stat-card accent"><div class="stat-value" id="totalCount">—</div><div class="stat-label">Total</div></div>
+    <div class="stat-card green"><div class="stat-value" id="activeCount">—</div><div class="stat-label">Active</div></div>
+    <div class="stat-card amber"><div class="stat-value" id="idleCount">—</div><div class="stat-label">Idle</div></div>
+    <div class="stat-card"><div class="stat-value" id="offlineCount">—</div><div class="stat-label">Offline</div></div>
   </div>
-
-  <!-- Summary Cards -->
-  <div class="summary-grid" id="summaryCards">
-    <div class="stat-card">
-      <div class="stat-number" id="totalCount">—</div>
-      <div class="stat-label">Total Staff</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-number" style="background:linear-gradient(135deg,#10b981,#059669);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;" id="activeCount">—</div>
-      <div class="stat-label">🟢 Active Now</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-number" style="background:linear-gradient(135deg,#f59e0b,#d97706);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;" id="idleCount">—</div>
-      <div class="stat-label">🟡 Idle</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-number" style="background:linear-gradient(135deg,#6b7280,#4b5563);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;" id="offlineCount">—</div>
-      <div class="stat-label">⚫ Offline</div>
-    </div>
-  </div>
-
-  <!-- Last updated -->
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <span class="section-label">Staff Activity Table</span>
-    <span class="text-muted" style="font-size:.8rem;">Last updated: <span id="lastUpdated" style="color:var(--accent-cyan);">—</span></span>
-  </div>
-
-  <!-- Activity Table -->
-  <div class="elevated-card p-4">
-    <div class="table-responsive">
-      <table class="table-premium">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Employee</th>
-            <th class="hide-mobile">Department</th>
-            <th class="hide-mobile">Shift</th>
-            <th>Current Page</th>
-            <th>Last Seen</th>
-            <th class="hide-mobile">Last Active</th>
-            <th class="hide-mobile">IP Address</th>
-          </tr>
-        </thead>
-        <tbody id="activityTable">
-          <tr>
-            <td colspan="8" class="text-center text-muted py-4">
-              <div class="skeleton skeleton-text" style="width:60%;margin:0 auto;"></div>
-              Loading activity data...
-            </td>
-          </tr>
-        </tbody>
+  <div class="card card-sm">
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Status</th><th>Employee</th><th class="hide-mobile">Department</th><th>Page</th><th>Last Seen</th><th class="hide-mobile">IP</th></tr></thead>
+        <tbody id="activityTable"><tr><td colspan="6" class="empty-state py-3">Loading...</td></tr></tbody>
       </table>
     </div>
   </div>
-
-  <!-- Legend -->
-  <div class="elevated-card p-3 mt-3">
-    <div class="d-flex gap-3 flex-wrap align-items-center">
-      <span style="font-size:.85rem;color:var(--text-muted);">Legend:</span>
-      <span class="status-pill status-active"><span class="dot dot-active"></span> Active — using app now</span>
-      <span class="status-pill status-idle"><span class="dot dot-idle"></span> Idle — no activity for 1+ min</span>
-      <span class="status-pill status-offline"><span class="dot dot-offline"></span> Offline — not on app</span>
+  <div class="card card-sm mt-3">
+    <div class="d-flex gap-3 flex-wrap">
+      <span class="badge badge-green"><span class="dot dot-green"></span> Active — using app now</span>
+      <span class="badge badge-amber"><span class="dot dot-amber"></span> Idle — no activity 1+ min</span>
+      <span class="badge badge-gray"><span class="dot dot-gray"></span> Offline — not connected</span>
     </div>
   </div>
-
 </div>
 {% endblock %}
-
 {% block scripts %}
 <script>
-const REFRESH_INTERVAL = 10000; // 10 seconds
-let refreshTimer = null;
-let barTimer = null;
-let barWidth = 100;
-
-function getStatusHTML(status) {
-  const map = {
-    active:  `<span class="status-pill status-active"><span class="dot dot-active"></span> Active</span>`,
-    idle:    `<span class="status-pill status-idle"><span class="dot dot-idle"></span> Idle</span>`,
-    offline: `<span class="status-pill status-offline"><span class="dot dot-offline"></span> Offline</span>`,
-  };
-  return map[status] || map.offline;
-}
-
-function getPageLabel(page) {
-  const map = {
-    '/staff':          '🏠 Dashboard',
-    '/staff/history':  '📋 History',
-    '/admin':          '👨‍💼 Admin',
-    '/admin/analytics':'📊 Analytics',
-    '/admin/system':   '⚙️ System',
-    '/admin/activity': '👁️ Activity',
-    '/':               '🔄 Home',
-  };
-  return map[page] || page || '—';
-}
+const INTERVAL = 10000;
+let barTimer, barW = 100;
+const pages = {'/staff':'Dashboard','/staff/history':'History','/admin':'Admin','/admin/analytics':'Analytics','/admin/system':'System','/admin/activity':'Activity'};
 
 async function fetchActivity() {
-  try {
-    const res = await fetch('/api/activity');
-    if (!res.ok) return;
-    const data = await res.json();
-
-    // Update summary
-    document.getElementById('totalCount').textContent   = data.summary.total;
-    document.getElementById('activeCount').textContent  = data.summary.active;
-    document.getElementById('idleCount').textContent    = data.summary.idle;
-    document.getElementById('offlineCount').textContent = data.summary.offline;
-    document.getElementById('lastUpdated').textContent  = data.updated;
-
-    // Update table
-    const tbody = document.getElementById('activityTable');
-    if (!data.staff || data.staff.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No staff found.</td></tr>`;
-      return;
-    }
-
-    // Sort: active first, then idle, then offline
-    const order = { active: 0, idle: 1, offline: 2 };
-    data.staff.sort((a, b) => (order[a.status] || 2) - (order[b.status] || 2));
-
-    tbody.innerHTML = data.staff.map(s => `
-      <tr class="row-${s.status}">
-        <td>${getStatusHTML(s.status)}</td>
-        <td class="fw-bold">${s.username}</td>
-        <td class="hide-mobile"><span class="badge bg-secondary">${s.department}</span></td>
-        <td class="hide-mobile" style="font-size:.8rem;">${s.shift}</td>
-        <td><span class="page-badge">${getPageLabel(s.current_page)}</span></td>
-        <td style="font-size:.85rem;color:var(--accent-cyan);">${s.last_seen}</td>
-        <td class="hide-mobile" style="font-size:.8rem;color:var(--text-muted);">${s.last_active?.slice(11,19) || '—'}</td>
-        <td class="hide-mobile" style="font-size:.8rem;color:var(--text-muted);font-family:monospace;">${s.ip_addr || '—'}</td>
-      </tr>
-    `).join('');
-
-  } catch(e) {
-    console.error('Activity fetch error:', e);
-  }
+  const res = await fetch('/api/activity').catch(()=>null);
+  if(!res||!res.ok) return;
+  const data = await res.json();
+  document.getElementById('totalCount').textContent   = data.summary.total;
+  document.getElementById('activeCount').textContent  = data.summary.active;
+  document.getElementById('idleCount').textContent    = data.summary.idle;
+  document.getElementById('offlineCount').textContent = data.summary.offline;
+  document.getElementById('lastUpdated').textContent  = data.updated;
+  const order = {active:0,idle:1,offline:2};
+  data.staff.sort((a,b)=>(order[a.status]||2)-(order[b.status]||2));
+  document.getElementById('activityTable').innerHTML = data.staff.length ? data.staff.map(s=>`
+    <tr>
+      <td><span class="badge status-${s.status}"><span class="dot dot-${s.status==='active'?'green':s.status==='idle'?'amber':'gray'}${s.status!=='offline'?' dot-pulse':''}"></span> ${s.status}</span></td>
+      <td class="fw-500">${s.username}</td>
+      <td class="hide-mobile"><span class="badge badge-gray">${s.department}</span></td>
+      <td class="text-xs mono">${pages[s.current_page]||s.current_page||'—'}</td>
+      <td class="text-xs mono text-muted">${s.last_seen}</td>
+      <td class="hide-mobile text-xs mono text-muted">${s.ip_addr||'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty-state py-3">No staff found</td></tr>';
 }
 
-function startRefreshBar() {
-  barWidth = 100;
-  document.getElementById('refreshBar').style.width = '100%';
-  clearInterval(barTimer);
-  barTimer = setInterval(() => {
-    barWidth -= (100 / (REFRESH_INTERVAL / 100));
-    if(barWidth < 0) barWidth = 100;
-    document.getElementById('refreshBar').style.width = barWidth + '%';
-  }, 100);
+function startBar() {
+  barW=100; clearInterval(barTimer);
+  barTimer=setInterval(()=>{barW-=100/(INTERVAL/100);document.getElementById('refreshBar').style.width=Math.max(barW,0)+'%';},100);
 }
 
-function startRefresh() {
-  fetchActivity();
-  startRefreshBar();
-  clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => {
-    fetchActivity();
-    startRefreshBar();
-  }, REFRESH_INTERVAL);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  startRefresh();
-});
+document.addEventListener('DOMContentLoaded',()=>{fetchActivity();startBar();setInterval(()=>{fetchActivity();startBar();},INTERVAL);});
 </script>
 {% endblock %}
