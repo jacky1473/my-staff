@@ -212,18 +212,25 @@ def generate_pin():
     return ''.join(random.choices(string.digits, k=4))
 
 
-def log_audit(action, details=None, user_id=None):
-    """Log admin actions — uses own connection with timeout to avoid locking"""
+def log_audit(action, details=None, user_id=None, conn=None):
+    """
+    Log admin actions.
+    If conn is provided, reuse it (same transaction, no lock contention).
+    Otherwise open a short-lived connection.
+    """
+    own_conn = conn is None
     try:
         ip_addr = request.remote_addr if request else 'system'
-        conn = sqlite3.connect(DB_PATH, timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL")  # Allows concurrent reads
+        if own_conn:
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
             "INSERT INTO audit_logs (user_id, action, details, ip_addr, timestamp) VALUES (?,?,?,?,?)",
             (user_id, action, details, ip_addr, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
         )
-        conn.commit()
-        conn.close()
+        if own_conn:
+            conn.commit()
+            conn.close()
     except Exception as e:
         logger.error(f"Audit log error: {e}")
 
@@ -587,7 +594,7 @@ def forgot():
                 conn.commit()
                 conn.close()
                 _clear_attempts(username)
-                log_audit('PASSWORD_RESET', username=user['id'])
+                log_audit('PASSWORD_RESET', str(user['id']), user['id'])
                 flash("✅ Password reset successfully. You may now log in.")
                 return redirect(url_for('login'))
             else:
@@ -675,7 +682,7 @@ def clock():
                 'INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?,?,?,?)',
                 (user_id, today, now_time, 'Present')
             )
-            log_audit('CLOCK_IN', today, user_id)
+            log_audit('CLOCK_IN', today, user_id, conn=conn)
             flash(f'✅ Clocked in at {now_time}')
         else:
             flash('You have already clocked in today.')
@@ -684,7 +691,7 @@ def clock():
             conn.execute(
                 'UPDATE attendance SET clock_out = ? WHERE id = ?', (now_time, record['id'])
             )
-            log_audit('CLOCK_OUT', today, user_id)
+            log_audit('CLOCK_OUT', today, user_id, conn=conn)
             flash(f'👋 Clocked out at {now_time}')
         else:
             flash('You must clock in first, or have already clocked out.')
@@ -846,7 +853,7 @@ def admin_action():
                         (new_user, generate_password_hash(new_pass), full_name,
                          dept, 'Staff', '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
                     )
-                    log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
+                    log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'], conn=conn)
                     flash(f"✅ Employee '{new_user}' created.")
                 except sqlite3.IntegrityError:
                     flash(f"Username '{new_user}' already exists.")
@@ -856,7 +863,7 @@ def admin_action():
             user = conn.execute("SELECT id FROM users WHERE username=? AND role!='Admin'", (target,)).fetchone()
             if user:
                 conn.execute("DELETE FROM users WHERE id = ?", (user['id'],))
-                log_audit('USER_DELETED', target, session['user_id'])
+                log_audit('USER_DELETED', target, session['user_id'], conn=conn)
                 flash(f"✅ Employee '{target}' removed.")
             else:
                 flash("User not found.")
@@ -871,7 +878,7 @@ def admin_action():
                     "UPDATE users SET password=? WHERE username=?",
                     (generate_password_hash(new_pass), target)
                 )
-                log_audit('PASSWORD_RESET_ADMIN', target, session['user_id'])
+                log_audit('PASSWORD_RESET_ADMIN', target, session['user_id'], conn=conn)
                 flash(f"✅ Password reset for '{target}'.")
 
         elif action_type == 'change_shift':
@@ -885,7 +892,7 @@ def admin_action():
                     "UPDATE users SET shift=?, weekoff=? WHERE username=?",
                     (new_shift, new_weekoff, target)
                 )
-                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}", session['user_id'])
+                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}", session['user_id'], conn=conn)
                 flash(f"✅ Schedule updated for '{target}'.")
 
         elif action_type == 'mark_leave':
@@ -907,7 +914,7 @@ def admin_action():
                             'INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)',
                             (user['id'], today, status)
                         )
-                    log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'])
+                    log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'], conn=conn)
                     flash(f"✅ '{target}' marked as {status}.")
                 else:
                     flash("User not found.")
@@ -925,14 +932,14 @@ def admin_action():
                     "INSERT INTO announcements (title, body, priority, created_at, created_by, active) VALUES (?,?,?,?,?,1)",
                     (title, body, priority, ist_now().strftime('%Y-%m-%d %H:%M:%S'), session['username'])
                 )
-                log_audit('ANNOUNCEMENT_POSTED', title, session['user_id'])
+                log_audit('ANNOUNCEMENT_POSTED', title, session['user_id'], conn=conn)
                 flash(f"✅ Announcement posted.")
 
         elif action_type == 'delete_announcement':
             ann_id = request.form.get('ann_id', '')
             if ann_id.isdigit():
                 conn.execute("DELETE FROM announcements WHERE id=?", (int(ann_id),))
-                log_audit('ANNOUNCEMENT_DELETED', f"ID: {ann_id}", session['user_id'])
+                log_audit('ANNOUNCEMENT_DELETED', f"ID: {ann_id}", session['user_id'], conn=conn)
                 flash("✅ Announcement removed.")
             else:
                 flash("Invalid ID.")
@@ -944,7 +951,7 @@ def admin_action():
                 "UPDATE users SET full_name=? WHERE username=?",
                 (full_name, target)
             )
-            log_audit('PROFILE_UPDATED', f"{target}: {full_name}", session['user_id'])
+            log_audit('PROFILE_UPDATED', f"{target}: {full_name}", session['user_id'], conn=conn)
             flash(f"✅ Profile updated for '{target}'.")
 
         elif action_type == 'update_company':
@@ -953,7 +960,7 @@ def admin_action():
                 flash("Company name required.")
             else:
                 conn.execute("UPDATE company SET name=? WHERE id=1", (new_name,))
-                log_audit('COMPANY_UPDATED', new_name, session['user_id'])
+                log_audit('COMPANY_UPDATED', new_name, session['user_id'], conn=conn)
                 flash(f"✅ Company name updated.")
 
         conn.commit()
@@ -1412,96 +1419,114 @@ def parse_shift_start(shift_str):
 
 def run_attendance_checker():
     """
-    Background thread: runs every 60 seconds
-    - 30 mins after shift start with no clock-in → mark LATE
-    - 60 mins after shift start with no clock-in → mark ABSENT
+    Background thread: runs every 60 seconds.
+    - Clears stale Late/Absent if weekoff was changed to today (Bug 1 fix)
+    - Only logs/updates once per status transition (Bug 2 fix)
+    - Guarantees conn.close() via finally (Bug 4 fix)
+    - Respects Leave — never auto-overrides admin manual marks
     """
     import time as time_module
 
     while True:
+        conn = None
         try:
-            now_ist      = ist_now()
-            today        = now_ist.strftime('%Y-%m-%d')
-            today_day    = now_ist.strftime('%A')  # e.g. "Monday"
-            now_time     = now_ist.time()
+            now_ist   = ist_now()
+            today     = now_ist.strftime('%Y-%m-%d')
+            today_day = now_ist.strftime('%A')
+            now_time  = now_ist.time()
 
-            conn = get_db_connection()
+            conn  = get_db_connection()
             staff = conn.execute(
                 "SELECT id, username, shift, weekoff FROM users WHERE role='Staff'"
             ).fetchall()
 
             for s in staff:
-                # Skip if today is their weekoff
+                # If today is their weekoff — clear any stale auto Late/Absent
+                # (handles: weekoff changed AFTER scheduler already marked them)
                 if s['weekoff'] == today_day:
+                    stale = conn.execute(
+                        "SELECT id, status FROM attendance WHERE user_id=? AND date=?",
+                        (s['id'], today)
+                    ).fetchone()
+                    if stale and stale['status'] in ('Late', 'Absent'):
+                        conn.execute("DELETE FROM attendance WHERE id=?", (stale['id'],))
+                        log_audit('AUTO_WEEKOFF_CLEARED',
+                                  f"{s['username']} — cleared stale {stale['status']}",
+                                  s['id'], conn=conn)
+                        logger.info(f"WEEKOFF-RECONCILE: cleared {stale['status']} for {s['username']}")
                     continue
 
                 shift_start = parse_shift_start(s['shift'])
                 if not shift_start:
                     continue
 
-                # Calculate minutes since shift started
-                from datetime import datetime as dt, timedelta as td
-                shift_dt = dt.combine(now_ist.date(), shift_start)
-                now_dt   = dt.combine(now_ist.date(), now_time)
+                from datetime import datetime as dt
+                shift_dt  = dt.combine(now_ist.date(), shift_start)
+                now_dt    = dt.combine(now_ist.date(), now_time)
                 mins_late = (now_dt - shift_dt).total_seconds() / 60
 
                 if mins_late < 0:
                     continue  # Shift hasn't started yet
 
-                # Check existing attendance record
                 record = conn.execute(
                     "SELECT * FROM attendance WHERE user_id=? AND date=?",
                     (s['id'], today)
                 ).fetchone()
 
                 if record and record['clock_in']:
-                    continue  # Already clocked in — no action needed
+                    continue  # Already clocked in
 
-                if record and record['status'] in ('Absent', 'Leave'):
-                    continue  # Already marked
+                if record and record['status'] == 'Leave':
+                    continue  # Admin-marked Leave — never auto-override
 
                 if mins_late >= 60:
-                    # 60+ mins late → ABSENT
-                    if record:
-                        conn.execute(
-                            "UPDATE attendance SET status='Absent' WHERE user_id=? AND date=?",
-                            (s['id'], today)
-                        )
-                    else:
-                        conn.execute(
-                            "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
-                            (s['id'], today, 'Absent')
-                        )
-                    log_audit('AUTO_ABSENT',
-                              f"{s['username']} — {mins_late:.0f} mins past shift start",
-                              s['id'])
-                    logger.info(f"AUTO-ABSENT: {s['username']} ({mins_late:.0f} mins late)")
+                    # Only act if not already Absent (avoids spam)
+                    if not record or record['status'] != 'Absent':
+                        if record:
+                            conn.execute(
+                                "UPDATE attendance SET status='Absent' WHERE user_id=? AND date=?",
+                                (s['id'], today)
+                            )
+                        else:
+                            conn.execute(
+                                "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
+                                (s['id'], today, 'Absent')
+                            )
+                        log_audit('AUTO_ABSENT',
+                                  f"{s['username']} — {mins_late:.0f} mins past shift start",
+                                  s['id'], conn=conn)
+                        logger.info(f"AUTO-ABSENT: {s['username']} ({mins_late:.0f} mins late)")
 
                 elif mins_late >= 30:
-                    # 30-59 mins late → LATE
-                    if record:
-                        if record['status'] != 'Late':
+                    # Only act if not already Late or Absent (avoids spam)
+                    if not record or record['status'] not in ('Late', 'Absent'):
+                        if record:
                             conn.execute(
                                 "UPDATE attendance SET status='Late' WHERE user_id=? AND date=?",
                                 (s['id'], today)
                             )
-                    else:
-                        conn.execute(
-                            "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
-                            (s['id'], today, 'Late')
-                        )
-                    log_audit('AUTO_LATE',
-                              f"{s['username']} — {mins_late:.0f} mins past shift start",
-                              s['id'])
-                    logger.info(f"AUTO-LATE: {s['username']} ({mins_late:.0f} mins late)")
+                        else:
+                            conn.execute(
+                                "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
+                                (s['id'], today, 'Late')
+                            )
+                        log_audit('AUTO_LATE',
+                                  f"{s['username']} — {mins_late:.0f} mins past shift start",
+                                  s['id'], conn=conn)
+                        logger.info(f"AUTO-LATE: {s['username']} ({mins_late:.0f} mins late)")
 
             conn.commit()
-            conn.close()
 
         except Exception as e:
             logger.error(f"Attendance checker error: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-        time_module.sleep(60)  # Check every 60 seconds
+        time_module.sleep(60)
 
 
 def start_autobackup():
@@ -1526,10 +1551,16 @@ if __name__ == '__main__':
     init_db()
     start_autobackup()
 
-    # Start auto Late/Absent background scheduler
-    checker = threading.Thread(target=run_attendance_checker, daemon=True)
-    checker.start()
-    logger.info("✅ Auto Late/Absent scheduler started")
+    # Guard against Werkzeug reloader double-spawning the scheduler thread.
+    # WERKZEUG_RUN_MAIN is only 'true' in the actual worker child process.
+    debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
 
-    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    if not debug_mode or is_reloader_main:
+        checker = threading.Thread(target=run_attendance_checker, daemon=True)
+        checker.start()
+        logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
+    else:
+        logger.info("Skipping scheduler in reloader parent process")
+
     app.run(host='0.0.0.0', port=5000, debug=debug_mode)
