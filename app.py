@@ -120,6 +120,43 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     )''')
 
+    conn.execute('''CREATE TABLE IF NOT EXISTS leave_requests (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id     INTEGER NOT NULL,
+        username    TEXT NOT NULL,
+        leave_type  TEXT NOT NULL,
+        from_date   TEXT NOT NULL,
+        to_date     TEXT NOT NULL,
+        days        INTEGER NOT NULL DEFAULT 1,
+        reason      TEXT NOT NULL,
+        status      TEXT DEFAULT 'Pending',
+        admin_note  TEXT DEFAULT '',
+        applied_at  TEXT NOT NULL,
+        reviewed_at TEXT DEFAULT '',
+        reviewed_by TEXT DEFAULT '',
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS notifications (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id    INTEGER NOT NULL,
+        title      TEXT NOT NULL,
+        message    TEXT NOT NULL,
+        type       TEXT DEFAULT 'info',
+        is_read    INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS leave_balance (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id     INTEGER NOT NULL UNIQUE,
+        casual      INTEGER DEFAULT 12,
+        sick        INTEGER DEFAULT 12,
+        earned      INTEGER DEFAULT 15,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
     _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN shift TEXT DEFAULT '09:00 AM - 06:00 PM'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
@@ -233,6 +270,78 @@ def log_audit(action, details=None, user_id=None, conn=None):
             conn.close()
     except Exception as e:
         logger.error(f"Audit log error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# NOTIFICATION HELPERS
+# ---------------------------------------------------------------------------
+
+def push_notification(user_id, title, message, notif_type='info', conn=None):
+    """Push an in-app notification to a user"""
+    own_conn = conn is None
+    try:
+        if own_conn:
+            conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO notifications (user_id, title, message, type, created_at) VALUES (?,?,?,?,?)",
+            (user_id, title, message, notif_type, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        if own_conn:
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        logger.error(f"Notification push error: {e}")
+
+
+def get_unread_count(user_id):
+    """Get unread notification count for a user"""
+    try:
+        conn = get_db_connection()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0",
+            (user_id,)
+        ).fetchone()[0]
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+
+def ensure_leave_balance(user_id, conn=None):
+    """Ensure leave balance record exists for user"""
+    own_conn = conn is None
+    try:
+        if own_conn:
+            conn = get_db_connection()
+        existing = conn.execute(
+            "SELECT id FROM leave_balance WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO leave_balance (user_id, casual, sick, earned) VALUES (?,12,12,15)",
+                (user_id,)
+            )
+            if own_conn:
+                conn.commit()
+        if own_conn:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Leave balance init error: {e}")
+
+
+def get_leave_balance(user_id):
+    """Get leave balance for a user"""
+    try:
+        conn = get_db_connection()
+        ensure_leave_balance(user_id, conn)
+        bal = conn.execute(
+            "SELECT casual, sick, earned FROM leave_balance WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+        conn.close()
+        return dict(bal) if bal else {'casual': 12, 'sick': 12, 'earned': 15}
+    except Exception:
+        return {'casual': 12, 'sick': 12, 'earned': 15}
 
 
 # ---------------------------------------------------------------------------
@@ -1266,6 +1375,393 @@ def admin_activity():
     if 'user_id' not in session or session['role'] != 'Admin':
         return redirect(url_for('login'))
     return render_template('activity.html')
+
+
+
+# ---------------------------------------------------------------------------
+# LEAVE REQUEST SYSTEM
+# ---------------------------------------------------------------------------
+
+LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Unpaid Leave']
+
+@app.route('/staff/leave')
+def staff_leave():
+    """Staff leave request page"""
+    if 'user_id' not in session or session['role'] != 'Staff':
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    conn    = get_db_connection()
+
+    my_requests = conn.execute(
+        "SELECT * FROM leave_requests WHERE user_id=? ORDER BY applied_at DESC",
+        (user_id,)
+    ).fetchall()
+
+    balance = get_leave_balance(user_id)
+    conn.close()
+
+    return render_template(
+        'leave_staff.html',
+        my_requests=my_requests,
+        balance=balance,
+        leave_types=LEAVE_TYPES,
+    )
+
+
+@app.route('/staff/leave/apply', methods=['POST'])
+def apply_leave():
+    """Staff submits a leave request"""
+    if 'user_id' not in session or session['role'] != 'Staff':
+        return redirect(url_for('login'))
+
+    user_id    = session['user_id']
+    username   = session['username']
+    leave_type = request.form.get('leave_type', '').strip()
+    from_date  = request.form.get('from_date', '').strip()
+    to_date    = request.form.get('to_date', '').strip()
+    reason     = request.form.get('reason', '').strip()
+
+    if not all([leave_type, from_date, to_date, reason]):
+        flash("All fields are required.")
+        return redirect(url_for('staff_leave'))
+
+    if leave_type not in LEAVE_TYPES:
+        flash("Invalid leave type.")
+        return redirect(url_for('staff_leave'))
+
+    # Calculate days
+    try:
+        from datetime import datetime as dt
+        fd = dt.strptime(from_date, '%Y-%m-%d')
+        td = dt.strptime(to_date, '%Y-%m-%d')
+        if td < fd:
+            flash("End date cannot be before start date.")
+            return redirect(url_for('staff_leave'))
+        days = (td - fd).days + 1
+    except ValueError:
+        flash("Invalid date format.")
+        return redirect(url_for('staff_leave'))
+
+    conn = get_db_connection()
+
+    # Check for overlapping pending/approved requests
+    overlap = conn.execute(
+        """SELECT id FROM leave_requests
+           WHERE user_id=? AND status IN ('Pending','Approved')
+           AND NOT (to_date < ? OR from_date > ?)""",
+        (user_id, from_date, to_date)
+    ).fetchone()
+
+    if overlap:
+        conn.close()
+        flash("You already have a leave request for overlapping dates.")
+        return redirect(url_for('staff_leave'))
+
+    conn.execute(
+        """INSERT INTO leave_requests
+           (user_id, username, leave_type, from_date, to_date, days, reason, status, applied_at)
+           VALUES (?,?,?,?,?,?,?,'Pending',?)""",
+        (user_id, username, leave_type, from_date, to_date, days,
+         reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+    )
+
+    # Notify all admins
+    admins = conn.execute("SELECT id FROM users WHERE role='Admin'").fetchall()
+    for admin in admins:
+        push_notification(
+            admin['id'],
+            f"Leave Request — {username}",
+            f"{username} applied for {leave_type} ({from_date} to {to_date}, {days} day{'s' if days>1 else ''}). Reason: {reason}",
+            'warning',
+            conn=conn
+        )
+
+    log_audit('LEAVE_APPLIED', f"{username}: {leave_type} {from_date}→{to_date}", user_id, conn=conn)
+    conn.commit()
+    conn.close()
+
+    flash(f"✅ Leave request submitted for {days} day{'s' if days>1 else ''}. Awaiting approval.")
+    return redirect(url_for('staff_leave'))
+
+
+@app.route('/staff/leave/cancel/<int:req_id>', methods=['POST'])
+def cancel_leave(req_id):
+    """Staff cancels a pending leave request"""
+    if 'user_id' not in session or session['role'] != 'Staff':
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    conn    = get_db_connection()
+
+    req = conn.execute(
+        "SELECT * FROM leave_requests WHERE id=? AND user_id=?",
+        (req_id, user_id)
+    ).fetchone()
+
+    if not req:
+        flash("Request not found.")
+        conn.close()
+        return redirect(url_for('staff_leave'))
+
+    if req['status'] != 'Pending':
+        flash("Only pending requests can be cancelled.")
+        conn.close()
+        return redirect(url_for('staff_leave'))
+
+    conn.execute("UPDATE leave_requests SET status='Cancelled' WHERE id=?", (req_id,))
+    log_audit('LEAVE_CANCELLED', f"Request #{req_id}", user_id, conn=conn)
+    conn.commit()
+    conn.close()
+
+    flash("✅ Leave request cancelled.")
+    return redirect(url_for('staff_leave'))
+
+
+@app.route('/admin/leave')
+def admin_leave():
+    """Admin leave management page"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    conn = get_db_connection()
+
+    pending  = conn.execute(
+        "SELECT * FROM leave_requests WHERE status='Pending' ORDER BY applied_at DESC"
+    ).fetchall()
+    history  = conn.execute(
+        "SELECT * FROM leave_requests WHERE status!='Pending' ORDER BY applied_at DESC LIMIT 100"
+    ).fetchall()
+
+    # Leave balance for all staff
+    staff = conn.execute(
+        "SELECT id, username, full_name FROM users WHERE role='Staff' ORDER BY username"
+    ).fetchall()
+
+    balances = {}
+    for s in staff:
+        ensure_leave_balance(s['id'], conn)
+        bal = conn.execute(
+            "SELECT casual, sick, earned FROM leave_balance WHERE user_id=?",
+            (s['id'],)
+        ).fetchone()
+        balances[s['id']] = dict(bal) if bal else {'casual':12,'sick':12,'earned':15}
+
+    conn.commit()
+    conn.close()
+
+    return render_template(
+        'leave_admin.html',
+        pending=pending,
+        history=history,
+        staff=staff,
+        balances=balances,
+    )
+
+
+@app.route('/admin/leave/action', methods=['POST'])
+def admin_leave_action():
+    """Admin approves or rejects leave request"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    req_id     = request.form.get('req_id', '')
+    action     = request.form.get('action', '')       # 'approve' or 'reject'
+    admin_note = request.form.get('admin_note', '').strip()
+
+    if not req_id.isdigit() or action not in ('approve', 'reject'):
+        flash("Invalid action.")
+        return redirect(url_for('admin_leave'))
+
+    conn = get_db_connection()
+    req  = conn.execute(
+        "SELECT * FROM leave_requests WHERE id=?", (int(req_id),)
+    ).fetchone()
+
+    if not req:
+        flash("Leave request not found.")
+        conn.close()
+        return redirect(url_for('admin_leave'))
+
+    if req['status'] != 'Pending':
+        flash(f"This request is already {req['status']}.")
+        conn.close()
+        return redirect(url_for('admin_leave'))
+
+    new_status  = 'Approved' if action == 'approve' else 'Rejected'
+    reviewed_at = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+    reviewed_by = session['username']
+
+    conn.execute(
+        """UPDATE leave_requests
+           SET status=?, admin_note=?, reviewed_at=?, reviewed_by=?
+           WHERE id=?""",
+        (new_status, admin_note, reviewed_at, reviewed_by, int(req_id))
+    )
+
+    if new_status == 'Approved':
+        # Mark attendance as Leave for each date in the range
+        from datetime import datetime as dt, timedelta
+        fd = dt.strptime(req['from_date'], '%Y-%m-%d')
+        td = dt.strptime(req['to_date'],   '%Y-%m-%d')
+        d  = fd
+        while d <= td:
+            date_str = d.strftime('%Y-%m-%d')
+            existing = conn.execute(
+                "SELECT id FROM attendance WHERE user_id=? AND date=?",
+                (req['user_id'], date_str)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE attendance SET status='Leave', clock_in=NULL, clock_out=NULL WHERE id=?",
+                    (existing['id'],)
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
+                    (req['user_id'], date_str, 'Leave')
+                )
+            d += timedelta(days=1)
+
+        # Deduct from leave balance
+        balance_col = {
+            'Casual Leave': 'casual',
+            'Sick Leave':   'sick',
+            'Earned Leave': 'earned',
+        }.get(req['leave_type'])
+
+        if balance_col:
+            ensure_leave_balance(req['user_id'], conn)
+            conn.execute(
+                f"UPDATE leave_balance SET {balance_col}=MAX(0,{balance_col}-?) WHERE user_id=?",
+                (req['days'], req['user_id'])
+            )
+
+        # Notify staff
+        push_notification(
+            req['user_id'],
+            "Leave Approved ✅",
+            f"Your {req['leave_type']} from {req['from_date']} to {req['to_date']} has been approved."
+            + (f" Note: {admin_note}" if admin_note else ""),
+            'success', conn=conn
+        )
+        log_audit('LEAVE_APPROVED',
+                  f"#{req_id} {req['username']} {req['from_date']}→{req['to_date']}",
+                  session['user_id'], conn=conn)
+        flash(f"✅ Leave approved for {req['username']}. Attendance auto-marked.")
+
+    else:
+        # Notify staff of rejection
+        push_notification(
+            req['user_id'],
+            "Leave Rejected ❌",
+            f"Your {req['leave_type']} from {req['from_date']} to {req['to_date']} was rejected."
+            + (f" Reason: {admin_note}" if admin_note else ""),
+            'error', conn=conn
+        )
+        log_audit('LEAVE_REJECTED',
+                  f"#{req_id} {req['username']} {req['from_date']}→{req['to_date']}",
+                  session['user_id'], conn=conn)
+        flash(f"❌ Leave rejected for {req['username']}.")
+
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin_leave'))
+
+
+@app.route('/admin/leave/balance', methods=['POST'])
+def admin_leave_balance():
+    """Admin manually adjusts leave balance"""
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    target_user_id = request.form.get('target_user_id', '')
+    casual  = request.form.get('casual',  '12')
+    sick    = request.form.get('sick',    '12')
+    earned  = request.form.get('earned',  '15')
+
+    if not target_user_id.isdigit():
+        flash("Invalid user.")
+        return redirect(url_for('admin_leave'))
+
+    conn = get_db_connection()
+    ensure_leave_balance(int(target_user_id), conn)
+    conn.execute(
+        "UPDATE leave_balance SET casual=?, sick=?, earned=? WHERE user_id=?",
+        (int(casual), int(sick), int(earned), int(target_user_id))
+    )
+    log_audit('LEAVE_BALANCE_UPDATED',
+              f"User #{target_user_id}: CL={casual} SL={sick} EL={earned}",
+              session['user_id'], conn=conn)
+    conn.commit()
+    conn.close()
+    flash("✅ Leave balance updated.")
+    return redirect(url_for('admin_leave'))
+
+
+# ---------------------------------------------------------------------------
+# NOTIFICATION API
+# ---------------------------------------------------------------------------
+
+@app.route('/api/notifications')
+def api_notifications():
+    """Get notifications for current user"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    user_id = session['user_id']
+    conn    = get_db_connection()
+
+    notifs = conn.execute(
+        """SELECT id, title, message, type, is_read, created_at
+           FROM notifications WHERE user_id=?
+           ORDER BY created_at DESC LIMIT 20""",
+        (user_id,)
+    ).fetchall()
+
+    unread = conn.execute(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0",
+        (user_id,)
+    ).fetchone()[0]
+
+    conn.close()
+
+    return jsonify({
+        'notifications': [dict(n) for n in notifs],
+        'unread': unread,
+    })
+
+
+@app.route('/api/notifications/read', methods=['POST'])
+def mark_notifications_read():
+    """Mark all notifications as read"""
+    if 'user_id' not in session:
+        return jsonify({'ok': False}), 401
+
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE notifications SET is_read=1 WHERE user_id=?",
+        (session['user_id'],)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/notifications/read/<int:notif_id>', methods=['POST'])
+def mark_one_read(notif_id):
+    """Mark single notification as read"""
+    if 'user_id' not in session:
+        return jsonify({'ok': False}), 401
+
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?",
+        (notif_id, session['user_id'])
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/status')

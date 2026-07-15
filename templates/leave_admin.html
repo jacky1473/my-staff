@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Leave Management — {{ company_name }}{% endblock %}
+{% block body %}
+
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Leave Management</span></div>
+  <div class="topbar-right">
+    <button id="theme-toggle" class="theme-btn">🌙</button>
+    <a href="/admin" class="btn btn-ghost btn-sm">← Admin</a>
+  </div>
+</div>
+
+<div class="page-wrap">
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}{% for msg in messages %}
+      <div class="flash-alert alert py-2 mt-2" style="font-size:.8rem;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);">{{ msg }}</div>
+    {% endfor %}{% endif %}
+  {% endwith %}
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">Leave Management</div>
+      <div class="page-subtitle">{{ pending|length }} pending request{{ 's' if pending|length != 1 else '' }}</div>
+    </div>
+  </div>
+
+  <!-- Pending Requests -->
+  <div class="card card-sm mb-3">
+    <div class="card-title">
+      🟡 Pending Requests
+      {% if pending %}
+        <span class="badge badge-amber ms-2">{{ pending|length }}</span>
+      {% endif %}
+    </div>
+
+    {% if pending %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>Type</th>
+            <th>From</th>
+            <th>To</th>
+            <th>Days</th>
+            <th>Reason</th>
+            <th>Applied</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in pending %}
+          <tr>
+            <td class="fw-500">{{ r.username }}</td>
+            <td style="font-size:.82rem;">{{ r.leave_type }}</td>
+            <td class="mono text-xs">{{ r.from_date }}</td>
+            <td class="mono text-xs">{{ r.to_date }}</td>
+            <td class="text-center fw-500">{{ r.days }}</td>
+            <td style="font-size:.8rem;max-width:180px;color:var(--text-secondary);">{{ r.reason }}</td>
+            <td class="mono text-xs text-muted">{{ r.applied_at[:10] }}</td>
+            <td>
+              <!-- Approve -->
+              <form action="/admin/leave/action" method="POST" style="display:inline;"
+                    onsubmit="return confirmAction(this,'approve')">
+                <input type="hidden" name="req_id" value="{{ r.id }}">
+                <input type="hidden" name="action" value="approve">
+                <input type="hidden" name="admin_note" class="note-input" value="">
+                <button type="submit" class="btn btn-success btn-sm">Approve</button>
+              </form>
+              <!-- Reject -->
+              <form action="/admin/leave/action" method="POST" style="display:inline;"
+                    onsubmit="return confirmAction(this,'reject')">
+                <input type="hidden" name="req_id" value="{{ r.id }}">
+                <input type="hidden" name="action" value="reject">
+                <input type="hidden" name="admin_note" class="note-input" value="">
+                <button type="submit" class="btn btn-danger btn-sm ms-1">Reject</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">No pending leave requests. 🎉</div>
+    {% endif %}
+  </div>
+
+  <!-- Leave Balance Management -->
+  <div class="card card-sm mb-3">
+    <div class="card-title">📊 Leave Balance by Employee</div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>Casual</th>
+            <th>Sick</th>
+            <th>Earned</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in staff %}
+          {% set bal = balances.get(s.id, {}) %}
+          <tr>
+            <td class="fw-500">{{ s.full_name or s.username }}<br><span class="text-xs text-muted">{{ s.username }}</span></td>
+            <td>
+              <form action="/admin/leave/balance" method="POST" class="d-flex gap-1 align-items-center">
+                <input type="hidden" name="target_user_id" value="{{ s.id }}">
+                <input type="number" name="casual" value="{{ bal.get('casual', 12) }}"
+                       class="form-control" style="width:60px;height:30px;font-size:.8rem;padding:.2rem .4rem;" min="0" max="365">
+                <input type="number" name="sick" value="{{ bal.get('sick', 12) }}"
+                       class="form-control" style="width:60px;height:30px;font-size:.8rem;padding:.2rem .4rem;" min="0" max="365">
+                <input type="number" name="earned" value="{{ bal.get('earned', 15) }}"
+                       class="form-control" style="width:60px;height:30px;font-size:.8rem;padding:.2rem .4rem;" min="0" max="365">
+                <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+              </form>
+            </td>
+            <td></td><td></td><td></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="empty-state py-3">No staff found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="card card-sm">
+    <div class="card-title">📋 Request History (Last 100)</div>
+    {% if history %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Employee</th><th>Type</th><th>Dates</th><th>Days</th><th>Status</th><th>Reviewed By</th><th>Note</th></tr>
+        </thead>
+        <tbody>
+          {% for r in history %}
+          <tr>
+            <td class="fw-500">{{ r.username }}</td>
+            <td style="font-size:.82rem;">{{ r.leave_type }}</td>
+            <td class="mono text-xs">{{ r.from_date }} → {{ r.to_date }}</td>
+            <td class="text-center">{{ r.days }}</td>
+            <td>
+              {% if r.status == 'Approved' %}<span class="badge badge-green">Approved</span>
+              {% elif r.status == 'Rejected' %}<span class="badge badge-red">Rejected</span>
+              {% else %}<span class="badge badge-gray">{{ r.status }}</span>
+              {% endif %}
+            </td>
+            <td class="text-xs text-muted">{{ r.reviewed_by or '—' }}</td>
+            <td style="font-size:.78rem;color:var(--text-muted);">{{ r.admin_note or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">No history yet.</div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function confirmAction(form, action) {
+  const username = form.closest('tr').querySelector('td.fw-500').textContent.trim();
+  const note = prompt(
+    action === 'approve'
+      ? `Approve leave for ${username}?\nOptional note for employee:`
+      : `Reject leave for ${username}?\nReason (will be shown to employee):`,
+    ''
+  );
+  if (note === null) return false; // Cancelled
+  form.querySelector('.note-input').value = note;
+  return true;
+}
+document.addEventListener('DOMContentLoaded', () => { initAlertToasts(); });
+</script>
+{% endblock %}

@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}My Leave — {{ company_name }}{% endblock %}
+{% block body %}
+
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ My Leave</span></div>
+  <div class="topbar-right">
+    <button id="theme-toggle" class="theme-btn">🌙</button>
+    <a href="/staff" class="btn btn-ghost btn-sm">← Dashboard</a>
+    <a href="/logout" class="btn btn-ghost btn-sm">Sign out</a>
+  </div>
+</div>
+
+<div class="page-wrap">
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}{% for msg in messages %}
+      <div class="flash-alert alert py-2 mt-2" style="font-size:.8rem;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);">{{ msg }}</div>
+    {% endfor %}{% endif %}
+  {% endwith %}
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">My Leave</div>
+      <div class="page-subtitle">Apply and track your leave requests</div>
+    </div>
+  </div>
+
+  <!-- Leave Balance Cards -->
+  <div class="stat-grid mb-4">
+    <div class="stat-card green">
+      <div class="stat-value">{{ balance.casual }}</div>
+      <div class="stat-label">Casual Leave</div>
+    </div>
+    <div class="stat-card amber">
+      <div class="stat-value">{{ balance.sick }}</div>
+      <div class="stat-label">Sick Leave</div>
+    </div>
+    <div class="stat-card accent">
+      <div class="stat-value">{{ balance.earned }}</div>
+      <div class="stat-label">Earned Leave</div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- Apply Leave Form -->
+    <div class="col-lg-4">
+      <div class="card card-sm">
+        <div class="card-title">Apply for Leave</div>
+        <form action="/staff/leave/apply" method="POST" novalidate>
+          <div class="form-group">
+            <label class="form-label">Leave Type</label>
+            <select name="leave_type" class="form-select" required>
+              {% for lt in leave_types %}
+              <option value="{{ lt }}">{{ lt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">From Date</label>
+            <input type="date" name="from_date" class="form-control" required
+                   min="{{ today }}" value="{{ today }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">To Date</label>
+            <input type="date" name="to_date" class="form-control" required
+                   min="{{ today }}" value="{{ today }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Reason</label>
+            <textarea name="reason" class="form-control" placeholder="Briefly explain the reason..." required maxlength="300"></textarea>
+          </div>
+          <div class="mb-3 p-2 rounded" id="daysPreview" style="background:var(--accent-dim);font-size:.82rem;display:none;color:var(--accent);">
+            📅 <span id="daysCount">1</span> day(s) selected
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Submit Request</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- My Requests -->
+    <div class="col-lg-8">
+      <div class="card card-sm">
+        <div class="card-title">My Leave Requests</div>
+        {% if my_requests %}
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Days</th>
+                <th>Status</th>
+                <th>Applied</th>
+                <th>Note</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in my_requests %}
+              <tr>
+                <td style="font-size:.82rem;">{{ r.leave_type }}</td>
+                <td class="mono text-xs">{{ r.from_date }}</td>
+                <td class="mono text-xs">{{ r.to_date }}</td>
+                <td class="text-center fw-500">{{ r.days }}</td>
+                <td>
+                  {% if r.status == 'Approved' %}
+                    <span class="badge badge-green">Approved</span>
+                  {% elif r.status == 'Rejected' %}
+                    <span class="badge badge-red">Rejected</span>
+                  {% elif r.status == 'Cancelled' %}
+                    <span class="badge badge-gray">Cancelled</span>
+                  {% else %}
+                    <span class="badge badge-amber">Pending</span>
+                  {% endif %}
+                </td>
+                <td class="mono text-xs text-muted">{{ r.applied_at[:10] }}</td>
+                <td style="font-size:.78rem;color:var(--text-muted);max-width:150px;">
+                  {{ r.admin_note or '—' }}
+                </td>
+                <td>
+                  {% if r.status == 'Pending' %}
+                  <form action="/staff/leave/cancel/{{ r.id }}" method="POST" style="display:inline;">
+                    <button type="submit" class="btn btn-ghost btn-sm"
+                            onclick="return confirm('Cancel this request?')"
+                            style="color:var(--red);font-size:.75rem;">Cancel</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty-state">No leave requests yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<nav class="mobile-nav">
+  <a href="/staff"><span class="icon">⊞</span>Home</a>
+  <a href="/staff/leave" class="active"><span class="icon">📅</span>Leave</a>
+  <a href="/staff/history"><span class="icon">☰</span>History</a>
+  <a href="/logout"><span class="icon">→</span>Sign Out</a>
+</nav>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const today = new Date().toISOString().split('T')[0];
+document.querySelector('[name=from_date]').min = today;
+document.querySelector('[name=to_date]').min   = today;
+
+function updateDaysPreview() {
+  const fd = new Date(document.querySelector('[name=from_date]').value);
+  const td = new Date(document.querySelector('[name=to_date]').value);
+  if (fd && td && td >= fd) {
+    const days = Math.floor((td - fd) / 86400000) + 1;
+    document.getElementById('daysCount').textContent = days;
+    document.getElementById('daysPreview').style.display = 'block';
+  }
+}
+
+document.querySelector('[name=from_date]').addEventListener('change', function() {
+  document.querySelector('[name=to_date]').min = this.value;
+  updateDaysPreview();
+});
+document.querySelector('[name=to_date]').addEventListener('change', updateDaysPreview);
+document.addEventListener('DOMContentLoaded', () => { initAlertToasts(); });
+</script>
+{% endblock %}
