@@ -15,14 +15,16 @@
       {% endfor %}{% endif %}
     {% endwith %}
 
+    {% set active_panel = request.form.get('login_type', 'staff') if request.method == 'POST' else 'staff' %}
+
     <!-- Toggle -->
     <div class="login-toggle mb-4">
-      <button class="login-toggle-btn active" data-panel="staff" onclick="switchPanel('staff')">Staff</button>
-      <button class="login-toggle-btn" data-panel="admin" onclick="switchPanel('admin')">Admin</button>
+      <button class="login-toggle-btn{{ ' active' if active_panel == 'staff' }}" data-panel="staff" onclick="switchPanel('staff')">Staff</button>
+      <button class="login-toggle-btn{{ ' active' if active_panel == 'admin' }}" data-panel="admin" onclick="switchPanel('admin')">Admin</button>
     </div>
 
     <!-- Staff -->
-    <div class="login-panel active" id="staff">
+    <div class="login-panel{{ ' active' if active_panel == 'staff' }}" id="staff">
       <form method="POST" novalidate>
         <input type="hidden" name="login_type" value="staff">
         <div class="form-group">
@@ -41,7 +43,7 @@
     </div>
 
     <!-- Admin -->
-    <div class="login-panel" id="admin">
+    <div class="login-panel{{ ' active' if active_panel == 'admin' }}" id="admin">
       <form method="POST" novalidate>
         <input type="hidden" name="login_type" value="admin">
         <div class="form-group">

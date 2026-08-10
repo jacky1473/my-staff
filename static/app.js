@@ -123,6 +123,22 @@ function initAutoRefresh() {
   }, 1000);
 }
 
+// ── LOGIN ERROR SHAKE ────────────────────────────────────
+function initLoginErrorShake() {
+  const hasError = document.querySelector('.flash-alert.alert-danger');
+  if (!hasError) return;
+  const panel = document.querySelector('.login-panel.active') || document;
+  const pwInput = panel.querySelector('input[type="password"]');
+  const userInput = panel.querySelector('input[name="username"]');
+  [pwInput, userInput].forEach(input => {
+    if (!input) return;
+    input.classList.add('input-error', 'shake-error');
+    input.addEventListener('animationend', () => input.classList.remove('shake-error'), { once: true });
+    input.addEventListener('input', () => input.classList.remove('input-error'), { once: true });
+  });
+  if (pwInput) { pwInput.value = ''; pwInput.focus(); }
+}
+
 // ── FLASH → TOAST ───────────────────────────────────────
 function initAlertToasts() {
   document.querySelectorAll('.flash-alert').forEach(el => {
@@ -169,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initConfirmActions();
   initMobileNav();
   initAutoRefresh();
+  initLoginErrorShake();
   initAlertToasts();
 });
 

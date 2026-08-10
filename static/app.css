@@ -325,6 +325,20 @@ a:hover { text-decoration: underline; }
 }
 textarea.form-control { height: auto; padding: .6rem .75rem; resize: vertical; min-height: 80px; }
 
+/* Invalid credentials — shake + red border */
+.form-control.input-error {
+  border-color: var(--red) !important;
+  box-shadow: 0 0 0 2px var(--red-dim) !important;
+}
+.shake-error { animation: shake-error .4s ease-in-out; }
+@keyframes shake-error {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-8px); }
+  40%      { transform: translateX(7px); }
+  60%      { transform: translateX(-5px); }
+  80%      { transform: translateX(3px); }
+}
+
 /* Password toggle */
 .pw-container { position: relative; }
 .pw-container .form-control { padding-right: 2.5rem; }
