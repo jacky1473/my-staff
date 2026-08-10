@@ -793,6 +793,18 @@ def clock():
             )
             log_audit('CLOCK_IN', today, user_id, conn=conn)
             flash(f'✅ Clocked in at {now_time}')
+        elif not record['clock_in']:
+            # Row already exists but clock_in is empty — this happens when the
+            # background scheduler auto-marked the day Late/Absent before the
+            # staff member got a chance to clock in. Let them clock in now
+            # instead of being permanently locked out for the day.
+            new_status = 'Present' if record['status'] == 'Absent' else record['status']
+            conn.execute(
+                'UPDATE attendance SET clock_in = ?, status = ? WHERE id = ?',
+                (now_time, new_status, record['id'])
+            )
+            log_audit('CLOCK_IN', today, user_id, conn=conn)
+            flash(f'✅ Clocked in at {now_time}')
         else:
             flash('You have already clocked in today.')
     elif action == 'out':
