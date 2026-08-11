@@ -1,4 +1,6 @@
 import os
+import io
+import secrets
 import sqlite3
 import pytz
 import logging
@@ -8,10 +10,17 @@ import calendar
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
+import pdfplumber
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 import shutil
 import json
 
@@ -1309,6 +1318,283 @@ def attendance_register():
         output_path,
         as_attachment=True,
         download_name=f"Attendance_Register_{month_name}_{year}.xlsx"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bulk User Upload — add employees in bulk from an Excel or PDF file.
+# Shows the required format / a downloadable sample before uploading.
+# ---------------------------------------------------------------------------
+BULK_UPLOAD_COLUMNS = [
+    # (canonical key, display header, required, help text)
+    ('username',   'Username',   True,  'Unique login ID, no spaces'),
+    ('full_name',  'Full Name',  False, "Defaults to username if left blank"),
+    ('password',   'Password',   False, 'Auto-generated if left blank'),
+    ('department', 'Department', True,  ' / '.join(ALLOWED_DEPARTMENTS)),
+    ('weekoff',    'Weekoff',    False, "Default: Sunday. One of: " + ', '.join(WEEKDAY_OPTIONS)),
+    ('shift',      'Shift',      False, "Default: 09:00 AM - 06:00 PM. One of: " + ' / '.join(SHIFT_OPTIONS)),
+]
+BULK_SAMPLE_ROWS = [
+    ['jdoe',  'John Doe',  '',           'IT', 'Sunday',   '09:00 AM - 06:00 PM'],
+    ['asmith','Amy Smith', 'Amy@12345',  'QA', 'Saturday', '10:00 AM - 07:00 PM'],
+]
+_COLUMN_ALIASES = {
+    'username': 'username', 'user name': 'username', 'user id': 'username', 'userid': 'username',
+    'full name': 'full_name', 'fullname': 'full_name', 'name': 'full_name',
+    'password': 'password', 'pass': 'password',
+    'department': 'department', 'dept': 'department',
+    'weekoff': 'weekoff', 'week off': 'weekoff', 'week-off': 'weekoff',
+    'shift': 'shift',
+}
+
+
+def _normalize_col(col):
+    key = str(col).strip().lower()
+    return _COLUMN_ALIASES.get(key, key.replace(' ', '_'))
+
+
+def _generate_temp_password():
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(10))
+
+
+def _build_sample_workbook():
+    """In-memory .xlsx sample template with headers, example rows, and
+    dropdown validation for Department / Weekoff / Shift."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Employees"
+    header_fill = PatternFill('solid', fgColor='343A40')
+    header_font = Font(color='FFFFFF', bold=True)
+
+    headers = [h for _, h, _, _ in BULK_UPLOAD_COLUMNS]
+    for col, h in enumerate(headers, start=1):
+        c = ws.cell(row=1, column=col, value=h)
+        c.font = header_font
+        c.fill = header_fill
+
+    for r, row in enumerate(BULK_SAMPLE_ROWS, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+
+    for col in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 22
+
+    # Dropdown validation so admins can't typo department/weekoff/shift
+    dept_dv = DataValidation(type="list", formula1=f'"{",".join(ALLOWED_DEPARTMENTS)}"', allow_blank=False)
+    weekoff_dv = DataValidation(type="list", formula1=f'"{",".join(WEEKDAY_OPTIONS)}"', allow_blank=True)
+    shift_dv = DataValidation(type="list", formula1=f'"{",".join(SHIFT_OPTIONS)}"', allow_blank=True)
+    ws.add_data_validation(dept_dv)
+    ws.add_data_validation(weekoff_dv)
+    ws.add_data_validation(shift_dv)
+    dept_dv.add(f"D2:D200")
+    weekoff_dv.add(f"E2:E200")
+    shift_dv.add(f"F2:F200")
+
+    notes = wb.create_sheet("Instructions")
+    notes.column_dimensions['A'].width = 100
+    lines = [
+        "Bulk Employee Upload — Instructions",
+        "",
+        "Fill one row per employee on the 'Employees' sheet, keeping the header row as-is.",
+        "",
+    ]
+    for key, header, required, help_text in BULK_UPLOAD_COLUMNS:
+        req = "REQUIRED" if required else "optional"
+        lines.append(f"• {header} ({req}): {help_text}")
+    lines += [
+        "",
+        "Usernames must be unique. Rows with a username that already exists will be skipped.",
+        "If Password is left blank, a random temporary password is generated and shown after upload.",
+    ]
+    for i, line in enumerate(lines, start=1):
+        cell = notes.cell(row=i, column=1, value=line)
+        if i == 1:
+            cell.font = Font(bold=True, size=13)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _build_sample_pdf():
+    """In-memory sample PDF showing the same table format for admins who
+    prefer to prepare/upload a PDF instead of an Excel file."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(letter), title="Bulk Employee Upload Sample")
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("Bulk Employee Upload — Sample Format", styles['Title']),
+        Spacer(1, 10),
+        Paragraph(
+            "Keep the header row exactly as shown. One row per employee. "
+            "Required columns: Username, Department.",
+            styles['Normal']
+        ),
+        Spacer(1, 14),
+    ]
+
+    headers = [h for _, h, _, _ in BULK_UPLOAD_COLUMNS]
+    data = [headers] + BULK_SAMPLE_ROWS
+    tbl = Table(data, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#343A40')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D0D3D9')),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5F6F8')]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 16))
+
+    for key, header, required, help_text in BULK_UPLOAD_COLUMNS:
+        req = "Required" if required else "Optional"
+        story.append(Paragraph(f"<b>{header}</b> ({req}): {help_text}", styles['Normal']))
+        story.append(Spacer(1, 4))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf
+
+
+def _parse_bulk_rows(file_storage):
+    """Returns (rows: list[dict], error: str|None). Supports .xlsx/.xls/.csv/.pdf"""
+    filename = secure_filename(file_storage.filename or '')
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+
+    if ext in ('xlsx', 'xls'):
+        df = pd.read_excel(file_storage, sheet_name=0, dtype=str)
+    elif ext == 'csv':
+        df = pd.read_csv(file_storage, dtype=str)
+    elif ext == 'pdf':
+        table_rows = None
+        with pdfplumber.open(file_storage) as pdf:
+            for page in pdf.pages:
+                for table in (page.extract_tables() or []):
+                    if table and len(table) > 1:
+                        table_rows = table
+                        break
+                if table_rows:
+                    break
+        if not table_rows:
+            return None, ("Couldn't find a table in that PDF. Make sure it has clear "
+                           "column/row lines like the sample PDF, or use the Excel template instead.")
+        df = pd.DataFrame(table_rows[1:], columns=table_rows[0])
+    else:
+        return None, "Unsupported file type. Please upload a .xlsx, .csv, or .pdf file."
+
+    df = df.dropna(how='all')
+    df.columns = [_normalize_col(c) for c in df.columns]
+
+    rows = []
+    for _, r in df.iterrows():
+        row = {key: (str(r[key]).strip() if key in df.columns and pd.notna(r.get(key)) else '')
+               for key, _, _, _ in BULK_UPLOAD_COLUMNS}
+        if any(row.values()):
+            rows.append(row)
+    return rows, None
+
+
+@app.route('/admin/bulk-upload', methods=['GET', 'POST'])
+def bulk_upload_users():
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    if request.method == 'GET':
+        return render_template('bulk_upload.html', columns=BULK_UPLOAD_COLUMNS, sample_rows=BULK_SAMPLE_ROWS)
+
+    uploaded = request.files.get('bulk_file')
+    if not uploaded or not uploaded.filename:
+        flash("Please choose a file to upload.")
+        return redirect(url_for('bulk_upload_users'))
+
+    rows, error = _parse_bulk_rows(uploaded)
+    if error:
+        flash(error)
+        return redirect(url_for('bulk_upload_users'))
+    if not rows:
+        flash("No employee rows found in that file.")
+        return redirect(url_for('bulk_upload_users'))
+
+    conn = get_db_connection()
+    results = []
+    for i, row in enumerate(rows, start=1):
+        username = row['username']
+        department = row['department']
+        full_name = row['full_name'] or username
+        weekoff = row['weekoff'] or 'Sunday'
+        shift = row['shift'] or SHIFT_OPTIONS[0]
+        temp_password = None
+
+        if not username:
+            results.append({'row': i, 'username': '(blank)', 'status': 'skipped', 'reason': 'Missing username'})
+            continue
+        if department not in ALLOWED_DEPARTMENTS:
+            results.append({'row': i, 'username': username, 'status': 'skipped',
+                             'reason': f"Invalid department '{department}'"})
+            continue
+        if weekoff not in WEEKDAY_OPTIONS:
+            results.append({'row': i, 'username': username, 'status': 'skipped',
+                             'reason': f"Invalid weekoff '{weekoff}'"})
+            continue
+        if shift not in SHIFT_OPTIONS:
+            shift = SHIFT_OPTIONS[0]
+
+        password = row['password']
+        if not password:
+            password = _generate_temp_password()
+            temp_password = password
+
+        try:
+            conn.execute(
+                "INSERT INTO users (username, password, full_name, department, role, shift, weekoff, "
+                "security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
+                (username, generate_password_hash(password), full_name, department,
+                 'Staff', shift, weekoff, 'Set by admin', 'yes')
+            )
+            log_audit('USER_CREATED', f"{username} ({department}) [bulk]", session['user_id'], conn=conn)
+            results.append({'row': i, 'username': username, 'status': 'created',
+                             'reason': f"Temp password: {temp_password}" if temp_password else ''})
+        except sqlite3.IntegrityError:
+            results.append({'row': i, 'username': username, 'status': 'skipped',
+                             'reason': 'Username already exists'})
+
+    conn.commit()
+    conn.close()
+
+    created = sum(1 for r in results if r['status'] == 'created')
+    skipped = sum(1 for r in results if r['status'] == 'skipped')
+    flash(f"✅ Bulk upload complete: {created} created, {skipped} skipped.")
+    return render_template('bulk_upload_result.html', results=results, created=created, skipped=skipped)
+
+
+@app.route('/admin/bulk-upload/sample.xlsx')
+def bulk_upload_sample_xlsx():
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+    return send_file(
+        _build_sample_workbook(),
+        as_attachment=True,
+        download_name="employee_upload_sample.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@app.route('/admin/bulk-upload/sample.pdf')
+def bulk_upload_sample_pdf():
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+    return send_file(
+        _build_sample_pdf(),
+        as_attachment=True,
+        download_name="employee_upload_sample.pdf",
+        mimetype="application/pdf"
     )
 
 

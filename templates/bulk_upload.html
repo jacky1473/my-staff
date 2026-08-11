@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Bulk Add Employees — {{ company_name }}{% endblock %}
+{% block body %}
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Bulk Add Employees</span></div>
+  <div class="topbar-right">
+    <a href="/admin" class="btn btn-ghost btn-sm">← Back to Admin</a>
+    <button id="theme-toggle" class="theme-btn" title="Toggle theme">🌙</button>
+  </div>
+</div>
+
+<div class="page-wrap">
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}{% for msg in messages %}
+      <div class="flash-alert alert alert-danger py-2 mt-2" style="font-size:.8rem;">{{ msg }}</div>
+    {% endfor %}{% endif %}
+  {% endwith %}
+
+  <div class="card mt-3" style="max-width:900px; margin:0 auto; padding:1.5rem;">
+    <h5 class="mb-1">Bulk Add Employees</h5>
+    <p class="text-muted" style="font-size:.85rem;">
+      Upload an Excel (.xlsx / .csv) or PDF file with one row per employee. Download a sample below to see
+      the exact format expected before you upload.
+    </p>
+
+    <!-- Required format -->
+    <div class="section-label mt-3">Required Format</div>
+    <div style="overflow-x:auto;">
+      <table class="table table-sm mt-2" style="font-size:.8rem;">
+        <thead>
+          <tr>
+            <th>Column</th>
+            <th>Required?</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, header, required, help_text in columns %}
+          <tr>
+            <td><code>{{ header }}</code></td>
+            <td>{% if required %}<span class="badge-req" style="color:var(--red); font-weight:600;">Required</span>{% else %}<span style="color:var(--text-muted);">Optional</span>{% endif %}</td>
+            <td>{{ help_text }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Sample preview -->
+    <div class="section-label mt-3">Sample Rows</div>
+    <div style="overflow-x:auto;">
+      <table class="table table-sm mt-2" style="font-size:.78rem;">
+        <thead>
+          <tr>{% for key, header, required, help_text in columns %}<th>{{ header }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          {% for row in sample_rows %}
+          <tr>{% for cell in row %}<td>{{ cell if cell else '—' }}</td>{% endfor %}</tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="d-flex gap-2 mt-2 mb-4" style="gap:.5rem; display:flex;">
+      <a href="/admin/bulk-upload/sample.xlsx" class="btn btn-secondary btn-sm">⬇ Download Sample .xlsx</a>
+      <a href="/admin/bulk-upload/sample.pdf" class="btn btn-secondary btn-sm">⬇ Download Sample .pdf</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- Upload form -->
+    <div class="section-label mt-3">Upload File</div>
+    <form method="POST" enctype="multipart/form-data" class="mt-2">
+      <div class="form-group">
+        <input type="file" name="bulk_file" class="form-control" accept=".xlsx,.xls,.csv,.pdf" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-2">Upload & Create Employees</button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => { initAlertToasts(); });
+</script>
+{% endblock %}

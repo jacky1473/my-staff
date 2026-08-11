@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Upload Results — {{ company_name }}{% endblock %}
+{% block body %}
+
+<div class="topbar">
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Bulk Upload Results</span></div>
+  <div class="topbar-right">
+    <a href="/admin/bulk-upload" class="btn btn-ghost btn-sm">Upload Another File</a>
+    <a href="/admin" class="btn btn-ghost btn-sm">← Back to Admin</a>
+    <button id="theme-toggle" class="theme-btn" title="Toggle theme">🌙</button>
+  </div>
+</div>
+
+<div class="page-wrap">
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}{% for msg in messages %}
+      <div class="flash-alert alert alert-success py-2 mt-2" style="font-size:.8rem;">{{ msg }}</div>
+    {% endfor %}{% endif %}
+  {% endwith %}
+
+  <div class="card mt-3" style="max-width:900px; margin:0 auto; padding:1.5rem;">
+    <h5 class="mb-1">Upload Results</h5>
+    <p class="text-muted" style="font-size:.85rem;">
+      {{ created }} employee(s) created, {{ skipped }} row(s) skipped.
+      {% if created %}Share the temp password shown below with each new employee — they should change it after first login.{% endif %}
+    </p>
+
+    <div style="overflow-x:auto;">
+      <table class="table table-sm mt-3" style="font-size:.82rem;">
+        <thead>
+          <tr><th>Row</th><th>Username</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          {% for r in results %}
+          <tr>
+            <td>{{ r.row }}</td>
+            <td>{{ r.username }}</td>
+            <td>
+              {% if r.status == 'created' %}
+                <span style="color:var(--green); font-weight:600;">✓ Created</span>
+              {% else %}
+                <span style="color:var(--red); font-weight:600;">✕ Skipped</span>
+              {% endif %}
+            </td>
+            <td>{{ r.reason }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => { initAlertToasts(); });
+</script>
+{% endblock %}
