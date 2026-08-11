@@ -180,6 +180,16 @@
           </form>
           <hr class="divider">
 
+          <!-- Monthly Attendance Register (replaces manual register) -->
+          <div class="section-label">Monthly Attendance Register</div>
+          <form action="/reports/register" method="GET">
+            <div class="form-group">
+              <input type="month" name="ym" class="form-control" id="registerMonthPicker" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm btn-block">Download Register</button>
+          </form>
+          <hr class="divider">
+
           <!-- Delete -->
           <div class="section-label">Remove Employee</div>
           <form action="/admin_action" method="POST" data-confirm="Permanently delete this employee and all their records?">
@@ -310,6 +320,11 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   initSidebarTabs(); initAlertToasts(); initConfirmActions();
+  const mp = document.getElementById('registerMonthPicker');
+  if (mp && !mp.value) {
+    const now = new Date();
+    mp.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
 });
 </script>
 {% endblock %}

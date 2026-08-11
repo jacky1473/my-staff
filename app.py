@@ -4,10 +4,14 @@ import pytz
 import logging
 import random
 import string
+import calendar
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 import shutil
 import json
 
@@ -1143,6 +1147,169 @@ def export_excel(report_type):
     df.to_excel(output_path, index=False)
     log_audit('EXPORT', f"{report_type} ({target_user})", session['user_id'])
     return send_file(output_path, as_attachment=True)
+
+
+# ---------------------------------------------------------------------------
+# Monthly Attendance Register — replaces the manual paper register.
+# One sheet per employee status grid (day-by-day, like a manual muster roll)
+# plus a Summary sheet with totals per employee for the month.
+# ---------------------------------------------------------------------------
+STATUS_CODE = {
+    'Present': 'P',
+    'Late':    'L',
+    'Absent':  'A',
+    'Leave':   'LV',
+}
+STATUS_FILL = {
+    'P':  PatternFill('solid', fgColor='D8F3DC'),
+    'L':  PatternFill('solid', fgColor='FFF3CD'),
+    'A':  PatternFill('solid', fgColor='F8D7DA'),
+    'LV': PatternFill('solid', fgColor='D6E4FF'),
+    'WO': PatternFill('solid', fgColor='E9ECEF'),
+    '-':  PatternFill('solid', fgColor='FFFFFF'),
+}
+THIN_BORDER = Border(*(Side(style='thin', color='D0D3D9'),) * 4)
+
+
+@app.route('/reports/register')
+def attendance_register():
+    if 'user_id' not in session or session['role'] != 'Admin':
+        return redirect(url_for('login'))
+
+    try:
+        ym = request.args.get('ym')
+        if ym and '-' in ym:
+            year, month = (int(p) for p in ym.split('-', 1))
+        else:
+            year  = int(request.args.get('year', ist_now().year))
+            month = int(request.args.get('month', ist_now().month))
+        if not (1 <= month <= 12) or not (2000 <= year <= 2100):
+            raise ValueError
+    except (TypeError, ValueError):
+        flash("Invalid month/year.")
+        return redirect(url_for('admin_dashboard'))
+
+    conn  = get_db_connection()
+    users = conn.execute(
+        "SELECT id, username, full_name, department, weekoff FROM users "
+        "WHERE role='Staff' ORDER BY department, username"
+    ).fetchall()
+
+    if not users:
+        conn.close()
+        flash("No staff to report on.")
+        return redirect(url_for('admin_dashboard'))
+
+    days_in_month = calendar.monthrange(year, month)[1]
+    today         = ist_now().date()
+    month_start   = datetime(year, month, 1).date()
+
+    # Pull the whole month's records in one query, keyed by (user_id, date)
+    month_str = f"{year:04d}-{month:02d}"
+    records = conn.execute(
+        "SELECT user_id, date, status FROM attendance WHERE date LIKE ?",
+        (f"{month_str}-%",)
+    ).fetchall()
+    conn.close()
+    status_by_user_date = {(r['user_id'], r['date']): r['status'] for r in records}
+
+    wb = Workbook()
+
+    # ---- Register sheet (day-by-day grid) ----
+    ws = wb.active
+    ws.title = "Register"
+    header_fill = PatternFill('solid', fgColor='343A40')
+    header_font = Font(color='FFFFFF', bold=True)
+
+    ws.cell(row=1, column=1, value="Employee").font = header_font
+    ws.cell(row=1, column=1).fill = header_fill
+    ws.cell(row=1, column=2, value="Department").font = header_font
+    ws.cell(row=1, column=2).fill = header_fill
+    for d in range(1, days_in_month + 1):
+        c = ws.cell(row=1, column=2 + d, value=d)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal='center')
+
+    for i, u in enumerate(users):
+        row = i + 2
+        ws.cell(row=row, column=1, value=u['full_name'] or u['username'])
+        ws.cell(row=row, column=2, value=u['department'] or '-')
+        for d in range(1, days_in_month + 1):
+            date_obj = datetime(year, month, d).date()
+            date_str = date_obj.strftime('%Y-%m-%d')
+            weekday_name = date_obj.strftime('%A')
+
+            if date_obj > today:
+                code = ''
+            elif weekday_name == u['weekoff']:
+                code = 'WO'
+            else:
+                status = status_by_user_date.get((u['id'], date_str))
+                code = STATUS_CODE.get(status, 'A' if date_obj < today else '-')
+
+            cell = ws.cell(row=row, column=2 + d, value=code)
+            cell.alignment = Alignment(horizontal='center')
+            cell.border = THIN_BORDER
+            if code in STATUS_FILL:
+                cell.fill = STATUS_FILL[code]
+
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 16
+    for d in range(1, days_in_month + 1):
+        ws.column_dimensions[get_column_letter(2 + d)].width = 4
+    ws.freeze_panes = "C2"
+
+    legend_row = len(users) + 4
+    ws.cell(row=legend_row, column=1, value="Legend: P=Present  L=Late  A=Absent  LV=Leave  WO=Week Off  (blank)=Future date").font = Font(italic=True, size=9)
+
+    # ---- Summary sheet (totals per employee) ----
+    ws2 = wb.create_sheet("Summary")
+    headers = ["Employee", "Department", "Present", "Late", "Absent", "Leave", "Week Off", "Days Marked", "Days in Month"]
+    for col, h in enumerate(headers, start=1):
+        c = ws2.cell(row=1, column=col, value=h)
+        c.font = header_font
+        c.fill = header_fill
+
+    for i, u in enumerate(users):
+        row = i + 2
+        counts = {'P': 0, 'L': 0, 'A': 0, 'LV': 0, 'WO': 0}
+        for d in range(1, days_in_month + 1):
+            date_obj = datetime(year, month, d).date()
+            if date_obj > today:
+                continue
+            date_str = date_obj.strftime('%Y-%m-%d')
+            weekday_name = date_obj.strftime('%A')
+            if weekday_name == u['weekoff']:
+                counts['WO'] += 1
+            else:
+                status = status_by_user_date.get((u['id'], date_str))
+                code = STATUS_CODE.get(status, 'A')
+                counts[code] = counts.get(code, 0) + 1
+
+        days_marked = counts['P'] + counts['L'] + counts['A'] + counts['LV']
+        ws2.cell(row=row, column=1, value=u['full_name'] or u['username'])
+        ws2.cell(row=row, column=2, value=u['department'] or '-')
+        ws2.cell(row=row, column=3, value=counts['P'])
+        ws2.cell(row=row, column=4, value=counts['L'])
+        ws2.cell(row=row, column=5, value=counts['A'])
+        ws2.cell(row=row, column=6, value=counts['LV'])
+        ws2.cell(row=row, column=7, value=counts['WO'])
+        ws2.cell(row=row, column=8, value=days_marked)
+        ws2.cell(row=row, column=9, value=days_in_month)
+
+    for col in range(1, len(headers) + 1):
+        ws2.column_dimensions[get_column_letter(col)].width = 16
+
+    month_name = calendar.month_name[month]
+    output_path = f"/tmp/attendance_register_{year}_{month:02d}.xlsx"
+    wb.save(output_path)
+    log_audit('EXPORT_REGISTER', f"{month_name} {year}", session['user_id'])
+    return send_file(
+        output_path,
+        as_attachment=True,
+        download_name=f"Attendance_Register_{month_name}_{year}.xlsx"
+    )
 
 
 # ---------------------------------------------------------------------------
