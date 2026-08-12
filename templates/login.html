@@ -26,6 +26,7 @@
     <!-- Staff -->
     <div class="login-panel{{ ' active' if active_panel == 'staff' }}" id="staff">
       <form method="POST" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="login_type" value="staff">
         <div class="form-group">
           <label class="form-label">Username</label>
@@ -45,6 +46,7 @@
     <!-- Admin -->
     <div class="login-panel{{ ' active' if active_panel == 'admin' }}" id="admin">
       <form method="POST" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="login_type" value="admin">
         <div class="form-group">
           <label class="form-label">Admin Username</label>

@@ -49,6 +49,7 @@
       <div class="card card-sm">
         <div class="card-title">Apply for Leave</div>
         <form action="/staff/leave/apply" method="POST" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="form-group">
             <label class="form-label">Leave Type</label>
             <select name="leave_type" class="form-select" required>
@@ -123,6 +124,7 @@
                 <td>
                   {% if r.status == 'Pending' %}
                   <form action="/staff/leave/cancel/{{ r.id }}" method="POST" style="display:inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-ghost btn-sm"
                             onclick="return confirm('Cancel this request?')"
                             style="color:var(--red);font-size:.75rem;">Cancel</button>
