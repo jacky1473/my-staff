@@ -13,6 +13,7 @@ from flask_wtf import CSRFProtect
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -30,6 +31,10 @@ import json
 # App Setup
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+
+# Trust exactly one hop of X-Forwarded-* headers (our nginx reverse proxy),
+# so request.host / request.scheme / client IP are correct behind it.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 _secret_key = os.environ.get('SECRET_KEY')
 if not _secret_key:
@@ -49,10 +54,20 @@ if not _secret_key:
 app.secret_key = _secret_key
 
 # Harden session cookies
+# Harden session cookies. SESSION_COOKIE_SECURE requires HTTPS — if this
+# deployment is served over plain HTTP (e.g. an internal-network nginx proxy
+# with no TLS), set FORCE_HTTP_COOKIES=true so the login flow still works.
+# Anything reachable outside a trusted LAN should be behind TLS instead of
+# using this flag, since plain HTTP exposes session cookies/credentials to
+# anyone on the network path.
+_force_http_cookies = os.environ.get('FORCE_HTTP_COOKIES', 'false').lower() == 'true'
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=os.environ.get('FLASK_DEBUG', 'false').lower() != 'true',
+    SESSION_COOKIE_SECURE=(
+        os.environ.get('FLASK_DEBUG', 'false').lower() != 'true'
+        and not _force_http_cookies
+    ),
 )
 
 # CSRF protection for all state-changing (POST/PUT/PATCH/DELETE) requests.
@@ -2562,22 +2577,32 @@ def start_autobackup():
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Startup — runs on import so it executes under both `python app.py` (dev)
+# and a WSGI server like gunicorn (production), which never triggers
+# `if __name__ == '__main__'`.
+# ---------------------------------------------------------------------------
+init_db()
+start_autobackup()
+
+# Guard against Werkzeug's reloader double-spawning the scheduler thread in
+# dev mode. WERKZEUG_RUN_MAIN is only 'true' in the actual reloader child.
+# In production (gunicorn, FLASK_DEBUG unset/false) this always starts the
+# thread once per worker process — see deployment notes: run gunicorn with
+# a single worker (--workers 1 --threads N) so this only ever starts once.
+_debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+_is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+
+if not _debug_mode or _is_reloader_main:
+    _checker = threading.Thread(target=run_attendance_checker, daemon=True)
+    _checker.start()
+    logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
+else:
+    logger.info("Skipping scheduler in reloader parent process")
+
+
+# ---------------------------------------------------------------------------
+# Entry point — only used for local dev (`python app.py`). Production runs
+# via gunicorn against the `app` object above instead.
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    init_db()
-    start_autobackup()
-
-    # Guard against Werkzeug reloader double-spawning the scheduler thread.
-    # WERKZEUG_RUN_MAIN is only 'true' in the actual worker child process.
-    debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
-
-    if not debug_mode or is_reloader_main:
-        checker = threading.Thread(target=run_attendance_checker, daemon=True)
-        checker.start()
-        logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
-    else:
-        logger.info("Skipping scheduler in reloader parent process")
-
-    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
+    app.run(host='0.0.0.0', port=5000, debug=_debug_mode)
