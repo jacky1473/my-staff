@@ -3,7 +3,7 @@
 {% block body %}
 
 <div class="topbar">
-  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Bulk Upload Results</span></div>
+  <div class="topbar-brand"><span class="brand-mark">{{ company_name[0]|upper }}</span>{{ company_name }} <span>/ Bulk Upload Results</span></div>
   <div class="topbar-right">
     <a href="/admin/bulk-upload" class="btn btn-ghost btn-sm">Upload Another File</a>
     <a href="/admin" class="btn btn-ghost btn-sm">← Back to Admin</a>

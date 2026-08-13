@@ -3,7 +3,7 @@
 {% block body %}
 <div class="auth-wrap">
   <div class="auth-card" style="max-width:440px;">
-    <div class="auth-logo">🏢 Initial Setup</div>
+    <div class="auth-logo"><span class="brand-mark lg">◆</span>Initial Setup</div>
     {% with messages = get_flashed_messages() %}{% if messages %}{% for msg in messages %}
       <div class="flash-alert alert alert-danger py-2 mb-3" style="font-size:.8rem;">{{ msg }}</div>
     {% endfor %}{% endif %}{% endwith %}

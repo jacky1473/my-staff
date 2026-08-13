@@ -4,7 +4,7 @@
 
 <!-- Topbar -->
 <div class="topbar">
-  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Dashboard</span></div>
+  <div class="topbar-brand"><span class="brand-mark">{{ company_name[0]|upper }}</span>{{ company_name }} <span>/ Dashboard</span></div>
   <div class="topbar-right">
     <span class="topbar-clock" id="liveClock">--:--:--</span>
     <span class="topbar-user">{{ session.get('display_name') or session['username'] }}</span>

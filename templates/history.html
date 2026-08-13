@@ -2,7 +2,7 @@
 {% block title %}Attendance History — {{ company_name }}{% endblock %}
 {% block body %}
 <div class="topbar">
-  <div class="topbar-brand">🏢 {{ company_name }} <span>/ History</span></div>
+  <div class="topbar-brand"><span class="brand-mark">{{ company_name[0]|upper }}</span>{{ company_name }} <span>/ History</span></div>
   <div class="topbar-right">
     <button id="theme-toggle" class="theme-btn">🌙</button>
     <a href="/staff" class="btn btn-ghost btn-sm">← Back</a>
