@@ -4,7 +4,7 @@
 
 <!-- Topbar -->
 <div class="topbar">
-  <div class="topbar-brand"><span class="brand-mark">{{ company_name[0]|upper }}</span>{{ company_name }} <span>/ Dashboard</span></div>
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Dashboard</span></div>
   <div class="topbar-right">
     <span class="topbar-clock" id="liveClock">--:--:--</span>
     <span class="topbar-user">{{ session.get('display_name') or session['username'] }}</span>
@@ -54,7 +54,6 @@
       <div class="card card-sm mb-3">
         <div class="card-title">Attendance</div>
         <form action="/clock" method="POST" class="d-flex flex-column gap-2">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" name="action" value="in" class="btn btn-clockin btn-block">Clock In</button>
           <button type="submit" name="action" value="out" class="btn btn-clockout btn-block">Clock Out</button>
         </form>

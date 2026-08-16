@@ -13,7 +13,6 @@
       <div class="text-muted text-xs mt-1">Expires in 3 minutes</div>
     </div>
     <form method="POST" action="/verify-pin" novalidate>
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="username" value="{{ username }}">
       <div class="form-group">
         <label class="form-label">Enter PIN</label>

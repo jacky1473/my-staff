@@ -4,7 +4,7 @@
 
 <!-- Topbar -->
 <div class="topbar">
-  <div class="topbar-brand"><span class="brand-mark">{{ company_name[0]|upper }}</span>{{ company_name }} <span>/ Bulk Add Employees</span></div>
+  <div class="topbar-brand">🏢 {{ company_name }} <span>/ Bulk Add Employees</span></div>
   <div class="topbar-right">
     <a href="/admin" class="btn btn-ghost btn-sm">← Back to Admin</a>
     <button id="theme-toggle" class="theme-btn" title="Toggle theme">🌙</button>
@@ -74,7 +74,6 @@
     <!-- Upload form -->
     <div class="section-label mt-3">Upload File</div>
     <form method="POST" enctype="multipart/form-data" class="mt-2">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-group">
         <input type="file" name="bulk_file" class="form-control" accept=".xlsx,.xls,.csv,.pdf" required>
       </div>

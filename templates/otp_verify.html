@@ -50,7 +50,6 @@
     {% endwith %}
 
     <form method="POST" action="/verify-otp" class="mt-4" novalidate>
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="username" value="{{ username }}">
       
       <label class="section-label">One-Time Password</label>

@@ -9,11 +9,8 @@ import string
 import calendar
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
-from flask_wtf import CSRFProtect
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from werkzeug.middleware.proxy_fix import ProxyFix
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -31,55 +28,7 @@ import json
 # App Setup
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
-
-# Trust exactly one hop of X-Forwarded-* headers (our nginx reverse proxy),
-# so request.host / request.scheme / client IP are correct behind it.
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
-
-_secret_key = os.environ.get('SECRET_KEY')
-if not _secret_key:
-    if os.environ.get('FLASK_DEBUG', 'false').lower() == 'true':
-        # Only allow an auto-generated (non-persistent) key in debug/dev mode.
-        _secret_key = secrets.token_hex(32)
-        logging.getLogger(__name__).warning(
-            "SECRET_KEY not set — using a random key for this run only (dev mode). "
-            "Set the SECRET_KEY environment variable before deploying to production."
-        )
-    else:
-        raise RuntimeError(
-            "SECRET_KEY environment variable is not set. Refusing to start with a "
-            "default/guessable secret key outside of debug mode. Set SECRET_KEY to a "
-            "long random value (e.g. `python -c \"import secrets; print(secrets.token_hex(32))\"`)."
-        )
-app.secret_key = _secret_key
-
-# Harden session cookies
-# Harden session cookies. SESSION_COOKIE_SECURE requires HTTPS — if this
-# deployment is served over plain HTTP (e.g. an internal-network nginx proxy
-# with no TLS), set FORCE_HTTP_COOKIES=true so the login flow still works.
-# Anything reachable outside a trusted LAN should be behind TLS instead of
-# using this flag, since plain HTTP exposes session cookies/credentials to
-# anyone on the network path.
-_force_http_cookies = os.environ.get('FORCE_HTTP_COOKIES', 'false').lower() == 'true'
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=(
-        os.environ.get('FLASK_DEBUG', 'false').lower() != 'true'
-        and not _force_http_cookies
-    ),
-)
-
-# CSRF protection for all state-changing (POST/PUT/PATCH/DELETE) requests.
-# JSON-only API endpoints used by the Windows agent are exempted below since
-# they authenticate via explicit credentials/JSON payload, not ambient cookies.
-csrf = CSRFProtect(app)
-
-# Signer for short-lived agent-download tokens (used so the .bat file's
-# background PowerShell download of agent.py doesn't need a raw, guessable
-# username and can't be reused after it expires).
-_agent_token_signer = URLSafeTimedSerializer(app.secret_key, salt='agent-script-download')
-AGENT_TOKEN_MAX_AGE = 300  # seconds — plenty for the .bat to run right after download
+app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please')
 
 DB_PATH = '/data/attendance.db' if os.path.exists('/data') else 'attendance.db'
 BACKUP_DIR = os.environ.get('BACKUP_DIR', './backups')
@@ -1660,7 +1609,6 @@ IDLE_SECONDS    = 60    # 1 minute no activity → idle
 OFFLINE_SECONDS = 300   # 5 minutes no heartbeat → offline
 
 @app.route('/api/agent-login', methods=['POST'])
-@csrf.exempt  # Windows agent, not a browser form; authenticates via JSON credentials each call
 def agent_login():
     """Windows agent login — returns session for heartbeat"""
     data     = request.get_json(silent=True) or {}
@@ -1695,7 +1643,6 @@ def agent_login():
 
 
 @app.route('/api/agent-logout', methods=['POST'])
-@csrf.exempt  # Windows agent process, not a browser form
 def agent_logout():
     """Mark agent as offline on shutdown"""
     if 'user_id' not in session:
@@ -1722,7 +1669,6 @@ def agent_logout():
 
 
 @app.route('/api/heartbeat', methods=['POST'])
-@csrf.exempt  # Called via same-origin JS fetch every 10s; JSON body, no ambient-cookie form vector
 def heartbeat():
     """Called every 10s from staff browser — silent tracking"""
     if 'user_id' not in session:
@@ -2252,7 +2198,6 @@ def api_notifications():
 
 
 @app.route('/api/notifications/read', methods=['POST'])
-@csrf.exempt  # low-risk idempotent JSON API, intended for JS fetch (no browser-form vector)
 def mark_notifications_read():
     """Mark all notifications as read"""
     if 'user_id' not in session:
@@ -2269,7 +2214,6 @@ def mark_notifications_read():
 
 
 @app.route('/api/notifications/read/<int:notif_id>', methods=['POST'])
-@csrf.exempt  # low-risk idempotent JSON API, intended for JS fetch (no browser-form vector)
 def mark_one_read(notif_id):
     """Mark single notification as read"""
     if 'user_id' not in session:
@@ -2329,8 +2273,7 @@ def download_agent():
 
     username  = session['username']
     server    = f"{request.scheme}://{request.host}"
-    token     = _agent_token_signer.dumps(username)
-    url       = f"{server}/agent-script?t={token}"
+    url       = f"{server}/agent-script?u={username}"
 
     # Build bat using triple-quoted string — avoids escaping issues
     bat_lines = [
@@ -2382,29 +2325,15 @@ def download_agent():
 
 
 @app.route('/agent-script')
-@csrf.exempt  # fetched by PowerShell (no session cookie), authenticated via signed token instead
 def agent_script():
-    """Serve personalized agent.py with credentials embedded.
-
-    Callable in two ways only, both tied to a specific known user —
-    never via a raw/guessable username in the URL (that was a prior
-    auth-bypass and username-enumeration bug):
-      1. An active browser login session (viewing/downloading directly).
-      2. A short-lived signed token minted by /download-agent, used by
-         the generated .bat file's background PowerShell download.
-    """
-    if 'user_id' in session:
-        u = session['username']
+    """Serve personalized agent.py with credentials embedded"""
+    if 'user_id' not in session:
+        # Allow download via URL param as fallback
+        u = request.args.get('u', '')
+        if not u:
+            return "Unauthorized", 401
     else:
-        token = request.args.get('t', '')
-        if not token:
-            return "Unauthorized", 401
-        try:
-            u = _agent_token_signer.loads(token, max_age=AGENT_TOKEN_MAX_AGE)
-        except SignatureExpired:
-            return "Download link expired — please re-download from the staff portal", 401
-        except BadSignature:
-            return "Unauthorized", 401
+        u = session.get('username', request.args.get('u', ''))
 
     server_ip = f"{request.scheme}://{request.host}"
 
@@ -2577,32 +2506,22 @@ def start_autobackup():
 
 
 # ---------------------------------------------------------------------------
-# Startup — runs on import so it executes under both `python app.py` (dev)
-# and a WSGI server like gunicorn (production), which never triggers
-# `if __name__ == '__main__'`.
-# ---------------------------------------------------------------------------
-init_db()
-start_autobackup()
-
-# Guard against Werkzeug's reloader double-spawning the scheduler thread in
-# dev mode. WERKZEUG_RUN_MAIN is only 'true' in the actual reloader child.
-# In production (gunicorn, FLASK_DEBUG unset/false) this always starts the
-# thread once per worker process — see deployment notes: run gunicorn with
-# a single worker (--workers 1 --threads N) so this only ever starts once.
-_debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-_is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
-
-if not _debug_mode or _is_reloader_main:
-    _checker = threading.Thread(target=run_attendance_checker, daemon=True)
-    _checker.start()
-    logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
-else:
-    logger.info("Skipping scheduler in reloader parent process")
-
-
-# ---------------------------------------------------------------------------
-# Entry point — only used for local dev (`python app.py`). Production runs
-# via gunicorn against the `app` object above instead.
+# Entry point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=_debug_mode)
+    init_db()
+    start_autobackup()
+
+    # Guard against Werkzeug reloader double-spawning the scheduler thread.
+    # WERKZEUG_RUN_MAIN is only 'true' in the actual worker child process.
+    debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+
+    if not debug_mode or is_reloader_main:
+        checker = threading.Thread(target=run_attendance_checker, daemon=True)
+        checker.start()
+        logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
+    else:
+        logger.info("Skipping scheduler in reloader parent process")
+
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
