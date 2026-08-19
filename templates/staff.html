@@ -54,6 +54,7 @@
       <div class="card card-sm mb-3">
         <div class="card-title">Attendance</div>
         <form action="/clock" method="POST" class="d-flex flex-column gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" name="action" value="in" class="btn btn-clockin btn-block">Clock In</button>
           <button type="submit" name="action" value="out" class="btn btn-clockout btn-block">Clock Out</button>
         </form>

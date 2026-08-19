@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import generate_csrf, CSRFError
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -28,13 +30,62 @@ import json
 # App Setup
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please')
 
 DB_PATH = '/data/attendance.db' if os.path.exists('/data') else 'attendance.db'
 BACKUP_DIR = os.environ.get('BACKUP_DIR', './backups')
 
 # Ensure backup directory exists
 os.makedirs(BACKUP_DIR, exist_ok=True)
+
+
+def _resolve_secret_key():
+    """Never hardcode a real secret key. Prefer SECRET_KEY env var (set this
+    via Jenkins credentials, not in the Jenkinsfile). If it's not provided,
+    persist a randomly generated key next to the database so sessions survive
+    restarts instead of invalidating every deploy."""
+    env_key = os.environ.get('SECRET_KEY')
+    if env_key:
+        return env_key
+
+    key_dir = os.path.dirname(DB_PATH) or '.'
+    os.makedirs(key_dir, exist_ok=True)
+    key_path = os.path.join(key_dir, '.secret_key')
+    if os.path.exists(key_path):
+        with open(key_path, 'r') as f:
+            return f.read().strip()
+
+    generated = secrets.token_hex(32)
+    with open(key_path, 'w') as f:
+        f.write(generated)
+    logging.warning(
+        "SECRET_KEY env var not set — generated and persisted a random key at %s. "
+        "Set SECRET_KEY explicitly in production for multi-instance deployments.",
+        key_path,
+    )
+    return generated
+
+
+app.secret_key = _resolve_secret_key()
+
+# Session cookie hardening
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
+
+csrf = CSRFProtect(app)
+# The Windows agent (agent/agent.py) authenticates with a JSON body from a
+# standalone script, not a browser form, so it can't carry a CSRF token.
+# Its three POST endpoints are individually @csrf.exempt below.
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    """Turn a raw '400 Bad Request: CSRF token missing/expired' page (what a
+    user would otherwise hit if a tab was left open across a redeploy, or a
+    session simply timed out) into a friendly redirect back to login."""
+    flash("Your session expired or the page was open too long. Please try again.")
+    return redirect(url_for('login'))
+
 
 ALLOWED_DEPARTMENTS = ['IT', 'MIS', 'QA', 'TL', 'Manager', 'Management']
 SHIFT_OPTIONS = [
@@ -1608,6 +1659,7 @@ def bulk_upload_sample_pdf():
 IDLE_SECONDS    = 60    # 1 minute no activity → idle
 OFFLINE_SECONDS = 300   # 5 minutes no heartbeat → offline
 
+@csrf.exempt
 @app.route('/api/agent-login', methods=['POST'])
 def agent_login():
     """Windows agent login — returns session for heartbeat"""
@@ -1642,6 +1694,7 @@ def agent_login():
     return jsonify({'ok': False, 'error': 'Invalid credentials'}), 401
 
 
+@csrf.exempt
 @app.route('/api/agent-logout', methods=['POST'])
 def agent_logout():
     """Mark agent as offline on shutdown"""
@@ -1668,6 +1721,7 @@ def agent_logout():
     return jsonify({'ok': True})
 
 
+@csrf.exempt
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
     """Called every 10s from staff browser — silent tracking"""
@@ -2506,22 +2560,30 @@ def start_autobackup():
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Startup — runs whether the app is launched via `python app.py` (dev) or
+# imported by a WSGI server like gunicorn (production), so init_db/backup/
+# scheduler aren't silently skipped in production.
+# ---------------------------------------------------------------------------
+debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+
+init_db()
+start_autobackup()
+
+# Guard against Werkzeug's dev-server reloader double-spawning the scheduler
+# thread. WERKZEUG_RUN_MAIN is only 'true' in the actual worker child process
+# when the reloader is active; under gunicorn (no reloader) it's unset, so
+# `not debug_mode` covers that case.
+if not debug_mode or is_reloader_main:
+    checker = threading.Thread(target=run_attendance_checker, daemon=True)
+    checker.start()
+    logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
+else:
+    logger.info("Skipping scheduler in reloader parent process")
+
+
+# ---------------------------------------------------------------------------
+# Entry point (local/dev only — production uses gunicorn, see Dockerfile)
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    init_db()
-    start_autobackup()
-
-    # Guard against Werkzeug reloader double-spawning the scheduler thread.
-    # WERKZEUG_RUN_MAIN is only 'true' in the actual worker child process.
-    debug_mode       = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    is_reloader_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
-
-    if not debug_mode or is_reloader_main:
-        checker = threading.Thread(target=run_attendance_checker, daemon=True)
-        checker.start()
-        logger.info("✅ Auto Late/Absent/Weekoff scheduler started")
-    else:
-        logger.info("Skipping scheduler in reloader parent process")
-
     app.run(host='0.0.0.0', port=5000, debug=debug_mode)

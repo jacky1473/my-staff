@@ -26,6 +26,7 @@
         <div class="card-title">Backup</div>
         <div class="d-flex justify-content-between text-sm mb-3"><span class="text-muted">Saved Backups</span><span class="fw-500">{{ backups|length }}</span></div>
         <form action="/admin/backup" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-primary btn-sm btn-block">Create Backup Now</button>
         </form>
       </div>
@@ -44,6 +45,7 @@
             <td class="text-xs text-muted">{{ "%.1f"|format(b.size/1024/1024) }} MB</td>
             <td>
               <form action="/admin/restore/{{ b.filename }}" method="POST" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-secondary btn-sm" onclick="return confirm('Restore from {{ b.mtime }}?')">Restore</button>
               </form>
             </td>

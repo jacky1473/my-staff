@@ -74,6 +74,7 @@
     <!-- Upload form -->
     <div class="section-label mt-3">Upload File</div>
     <form method="POST" enctype="multipart/form-data" class="mt-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-group">
         <input type="file" name="bulk_file" class="form-control" accept=".xlsx,.xls,.csv,.pdf" required>
       </div>

@@ -8,6 +8,7 @@
       <div class="flash-alert alert alert-danger py-2 mb-3" style="font-size:.8rem;">{{ msg }}</div>
     {% endfor %}{% endif %}{% endwith %}
     <form method="POST" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-group"><label class="form-label">Company Name</label><input type="text" name="company_name" class="form-control" placeholder="Acme Corp" required></div>
       <div class="form-group"><label class="form-label">Admin Username</label><input type="text" name="admin_username" class="form-control" placeholder="admin" required></div>
       <div class="form-group"><label class="form-label">Admin Password</label><div class="pw-container"><input type="password" name="admin_password" class="form-control" placeholder="Min 6 characters" required><button type="button" class="pw-toggle">👁</button></div></div>

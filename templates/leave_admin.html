@@ -63,6 +63,7 @@
               <!-- Approve -->
               <form action="/admin/leave/action" method="POST" style="display:inline;"
                     onsubmit="return confirmAction(this,'approve')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="req_id" value="{{ r.id }}">
                 <input type="hidden" name="action" value="approve">
                 <input type="hidden" name="admin_note" class="note-input" value="">
@@ -71,6 +72,7 @@
               <!-- Reject -->
               <form action="/admin/leave/action" method="POST" style="display:inline;"
                     onsubmit="return confirmAction(this,'reject')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="req_id" value="{{ r.id }}">
                 <input type="hidden" name="action" value="reject">
                 <input type="hidden" name="admin_note" class="note-input" value="">
@@ -108,6 +110,7 @@
             <td class="fw-500">{{ s.full_name or s.username }}<br><span class="text-xs text-muted">{{ s.username }}</span></td>
             <td>
               <form action="/admin/leave/balance" method="POST" class="d-flex gap-1 align-items-center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="target_user_id" value="{{ s.id }}">
                 <input type="number" name="casual" value="{{ bal.get('casual', 12) }}"
                        class="form-control" style="width:60px;height:30px;font-size:.8rem;padding:.2rem .4rem;" min="0" max="365">

@@ -70,6 +70,7 @@
           <!-- Add Employee -->
           <div class="section-label">Add Employee</div>
           <form action="/admin_action" method="POST" class="mb-3" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="add_user">
             <div class="form-group"><input type="text" name="new_username" class="form-control" placeholder="Username (login ID)" required></div>
             <div class="form-group"><input type="text" name="full_name" class="form-control" placeholder="Full Name (e.g. John Smith)"></div>
@@ -92,6 +93,7 @@
           <!-- Reset Password -->
           <div class="section-label">Reset Password</div>
           <form action="/admin_action" method="POST" class="mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="reset_password">
             <div class="form-group">
               <select name="target_user" class="form-select">
@@ -106,6 +108,7 @@
           <!-- Update Schedule -->
           <div class="section-label">Update Schedule</div>
           <form action="/admin_action" method="POST" class="mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="change_shift">
             <div class="form-group">
               <select name="target_user" class="form-select">
@@ -129,6 +132,7 @@
           <!-- Mark Status -->
           <div class="section-label">Mark Status</div>
           <form action="/admin_action" method="POST" class="mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="mark_leave">
             <div class="form-group">
               <select name="target_user" class="form-select">
@@ -148,6 +152,7 @@
           <!-- Update Profile Names -->
           <div class="section-label">Update Employee Names</div>
           <form action="/admin_action" method="POST" class="mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="update_profile">
             <div class="form-group">
               <select name="target_user" class="form-select">
@@ -194,6 +199,7 @@
           <!-- Delete -->
           <div class="section-label">Remove Employee</div>
           <form action="/admin_action" method="POST" data-confirm="Permanently delete this employee and all their records?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="delete_user">
             <div class="form-group">
               <select name="target_user" class="form-select">
@@ -208,6 +214,7 @@
         <div class="tab-pane" id="pane-notice">
           <div class="section-label">Post Announcement</div>
           <form action="/admin_action" method="POST" class="mb-3" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="post_announcement">
             <div class="form-group"><input type="text" name="ann_title" class="form-control" placeholder="Title" required maxlength="100"></div>
             <div class="form-group"><textarea name="ann_body" class="form-control" placeholder="Message..." required maxlength="500"></textarea></div>
@@ -231,6 +238,7 @@
                 <span>{{ ann.created_by }} · {{ ann.created_at[:10] }}</span>
                 {% if ann.active %}
                 <form action="/admin_action" method="POST" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="action_type" value="delete_announcement">
                   <input type="hidden" name="ann_id" value="{{ ann.id }}">
                   <button type="submit" class="btn btn-ghost btn-sm" style="height:20px;padding:0 .4rem;font-size:.7rem;">Remove</button>
@@ -248,6 +256,7 @@
         <div class="tab-pane" id="pane-settings">
           <div class="section-label">Company Name</div>
           <form action="/admin_action" method="POST" class="mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action_type" value="update_company">
             <div class="form-group"><input type="text" name="company_name" class="form-control" value="{{ company_name }}" required></div>
             <button type="submit" class="btn btn-primary btn-sm btn-block">Save</button>
