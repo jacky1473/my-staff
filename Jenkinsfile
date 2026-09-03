@@ -1,15 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        // Resolved once per build in the "Detect Compose Tool" stage below,
-        // since different hosts have different compose tooling installed:
-        //   - podman-docker + podman-compose (python package)
-        //   - podman-docker + the docker CLI's `compose` plugin
-        //   - plain docker + docker-compose
-        COMPOSE = ''
-    }
-
     stages {
         stage('Pull Code') {
             steps {
@@ -17,29 +8,9 @@ pipeline {
             }
         }
 
-        stage('Detect Compose Tool') {
-            steps {
-                script {
-                    // Prefer `docker compose` (v2 plugin — works whether
-                    // `docker` is real Docker or the podman-docker shim),
-                    // then podman-compose, then legacy docker-compose.
-                    if (sh(script: 'command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1', returnStatus: true) == 0) {
-                        env.COMPOSE = 'docker compose'
-                    } else if (sh(script: 'command -v podman-compose >/dev/null 2>&1', returnStatus: true) == 0) {
-                        env.COMPOSE = 'podman-compose'
-                    } else if (sh(script: 'command -v docker-compose >/dev/null 2>&1', returnStatus: true) == 0) {
-                        env.COMPOSE = 'docker-compose'
-                    } else {
-                        error("No compose tool found on this Jenkins host. Install one of: docker compose plugin, podman-compose, docker-compose.")
-                    }
-                    echo "Using compose tool: ${env.COMPOSE}"
-                }
-            }
-        }
-
         stage('Build Image') {
             steps {
-                sh "${env.COMPOSE} build"
+                sh 'podman-compose build'
             }
         }
 
@@ -50,7 +21,7 @@ pipeline {
                 // container with that name exists but isn't managed by
                 // compose, `up` below will fail with a name conflict.
                 // Harmless no-op once you're fully on compose.
-                sh "docker rm -f attendance-inst 2>/dev/null || true"
+                sh 'podman rm -f attendance-inst 2>/dev/null || true'
 
                 // No SECRET_KEY is passed here on purpose — a hardcoded key in
                 // source control lets anyone with repo access forge session
@@ -60,9 +31,9 @@ pipeline {
                 // instances behind a load balancer, inject SECRET_KEY here
                 // from a Jenkins credential instead, e.g.:
                 //   withCredentials([string(credentialsId: 'attendance-secret-key', variable: 'SECRET_KEY')]) {
-                //       sh "${env.COMPOSE} up -d --force-recreate --remove-orphans"
+                //       sh 'podman-compose up -d'
                 //   }
-                sh "${env.COMPOSE} up -d --force-recreate --remove-orphans"
+                sh 'podman-compose up -d'
             }
         }
 
@@ -88,7 +59,7 @@ pipeline {
 
     post {
         failure {
-            sh "${env.COMPOSE} logs --tail=100 attendance-app || true"
+            sh 'podman-compose logs --tail=100 attendance-app || true'
         }
     }
 }
