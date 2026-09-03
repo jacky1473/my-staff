@@ -1,0 +1,16 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.db
+*.sqlite3
+backups/
+.secret_key
+*.log
+Jenkinsfile
+docker-compose.yml
+README.md
+voice_assistant/

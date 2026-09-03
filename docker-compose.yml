@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  attendance-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: attendance-app:latest
+    container_name: attendance-inst
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - attendance_db_vol:/data
+    environment:
+      FLASK_DEBUG: "false"
+      # SECRET_KEY is intentionally left unset here. If you want a fixed key
+      # (e.g. for multi-instance/load-balanced setups), export SECRET_KEY in
+      # the shell/Jenkins credential before running compose — it will be
+      # picked up via the ${SECRET_KEY} substitution below. Otherwise leave
+      # it unset and app.py will generate + persist one under /data.
+      SECRET_KEY: ${SECRET_KEY:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/login', timeout=3).status==200 else 1)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  attendance_db_vol:
+    # Pinned to the exact name so this reuses the volume created by the old
+    # Jenkinsfile's `docker run -v attendance_db_vol:/data` — otherwise
+    # Compose prefixes volume names with the project name by default, which
+    # would silently create a NEW empty volume and look like data loss.
+    name: attendance_db_vol
