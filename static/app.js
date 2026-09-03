@@ -151,31 +151,6 @@ function initAlertToasts() {
   });
 }
 
-// ── SILENT ACTIVITY TRACKER ─────────────────────────────
-(function () {
-  const skip = ['/login', '/setup', '/forgot', '/verify-pin', '/agent-launch'];
-  if (skip.some(p => window.location.pathname.startsWith(p))) return;
-  let active = false;
-  ['mousemove','mousedown','keydown','touchstart','scroll'].forEach(ev =>
-    document.addEventListener(ev, () => { active = true; }, { passive: true })
-  );
-  function beat() {
-    fetch('/api/heartbeat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ page: window.location.pathname, active }),
-      keepalive: true,
-    }).catch(() => {});
-    active = false;
-  }
-  beat();
-  setInterval(beat, 10000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(); });
-  window.addEventListener('beforeunload', () => {
-    navigator.sendBeacon('/api/heartbeat', JSON.stringify({ page: window.location.pathname, active: false }));
-  });
-})();
-
 // ── INIT ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   Theme.init();
