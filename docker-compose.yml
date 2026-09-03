@@ -20,7 +20,11 @@ services:
       # picked up via the ${SECRET_KEY} substitution below. Otherwise leave
       # it unset and app.py will generate + persist one under /data.
       SECRET_KEY: ${SECRET_KEY:-}
-      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      # Defaults to false: this deploys over plain http:// with no TLS
+      # termination in front, and a Secure-flagged cookie is silently
+      # dropped by real browsers over HTTP — breaking every session on the
+      # very next request. Flip to true once this sits behind HTTPS.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/login', timeout=3).status==200 else 1)\" || exit 1"]
       interval: 30s

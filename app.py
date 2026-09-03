@@ -67,10 +67,15 @@ def _resolve_secret_key():
 
 app.secret_key = _resolve_secret_key()
 
-# Session cookie hardening
+# Session cookie hardening. SESSION_COOKIE_SECURE defaults to false because
+# this is deployed over plain http:// (no reverse proxy/TLS in front) — a
+# Secure-flagged cookie is silently dropped by real browsers over HTTP,
+# which breaks every session (login, PIN step, CSRF) on the very next
+# request. If you put this behind HTTPS (nginx/Caddy/etc terminating TLS),
+# set SESSION_COOKIE_SECURE=true so cookies aren't sent in the clear.
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
 
 csrf = CSRFProtect(app)
 # The Windows agent (agent/agent.py) authenticates with a JSON body from a
