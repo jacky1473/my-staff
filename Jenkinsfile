@@ -37,3 +37,14 @@ pipeline {
         }
     }
 }
+
+stage('Automated UI Testing') {
+    steps {
+        echo 'Running Selenium login test...'
+        // We sleep for a few seconds to ensure the web app is fully booted before testing
+        sh 'sleep 5' 
+        
+        // Run your Selenium script
+        sh 'python3 test_login.py'
+    }
+}:w
