@@ -17,34 +17,34 @@ pipeline {
 
         stage('Deploy Application') {
             steps {
-                echo 'Restarting the container...'
+                echo 'Deploying the new container...'
                 // Stop and remove the old container if it exists
                 sh 'docker stop attendance-inst || true'
                 sh 'docker rm attendance-inst || true'
 
-                // Run the new container with the SECRET_KEY included
+                // Run the new container with the SECRET_KEY and volume mount
                 sh 'docker run -d --name attendance-inst -p 5000:5000 -v attendance_db_vol:/data -e SECRET_KEY="c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c" --restart unless-stopped attendance-app:latest'
+            }
+        }
+
+        stage('Automated UI Testing') {
+            steps {
+                echo 'Running Selenium login test...'
+                // Give Gunicorn 10 seconds to fully boot up and bind to the port
+                sh 'sleep 10' 
+                
+                // Run the headless Firefox automation script
+                sh 'python3 test_login.py'
             }
         }
     }
     
     post {
         success {
-            echo 'Deployment successful, Boss!'
+            echo '✅ Deployment and UI testing completed successfully, Boss!'
         }
         failure {
-            echo 'Something went wrong during the build or deployment.'
+            echo '❌ Pipeline failed! Check the logs to see if the build, deploy, or login test crashed.'
         }
     }
 }
-
-stage('Automated UI Testing') {
-    steps {
-        echo 'Running Selenium login test...'
-        // We sleep for a few seconds to ensure the web app is fully booted before testing
-        sh 'sleep 5' 
-        
-        // Run your Selenium script
-        sh 'python3 test_login.py'
-    }
-}:w
