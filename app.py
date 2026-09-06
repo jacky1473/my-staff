@@ -108,9 +108,39 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
     )''')
 
+    conn.execute('''CREATE TABLE IF NOT EXISTS leaves (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER NOT NULL,
+        leave_type   TEXT    NOT NULL,
+        start_date   TEXT    NOT NULL,
+        end_date     TEXT    NOT NULL,
+        days         INTEGER NOT NULL DEFAULT 1,
+        reason       TEXT,
+        status       TEXT    DEFAULT 'Pending',
+        applied_at   TEXT    NOT NULL,
+        reviewed_by  TEXT,
+        reviewed_at  TEXT,
+        admin_remark TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS notifications (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id    INTEGER,
+        type       TEXT    DEFAULT 'notice',
+        title      TEXT    NOT NULL,
+        message    TEXT    NOT NULL,
+        created_at TEXT    NOT NULL,
+        created_by TEXT    NOT NULL,
+        is_read    INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
     _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
+    _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN total_hours TEXT")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN shift TEXT DEFAULT '09:00 AM - 06:00 PM'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN weekoff TEXT DEFAULT 'Sunday'")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN pl_quota INTEGER DEFAULT 18")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
 
@@ -159,6 +189,56 @@ def get_active_announcements():
     return rows
 
 
+def calculate_hours_worked(clock_in, clock_out):
+    """Calculate formatted working hours between clock_in and clock_out (HH:MM:SS)"""
+    if not clock_in or not clock_out:
+        return None
+    try:
+        t_in = datetime.strptime(clock_in, '%H:%M:%S')
+        t_out = datetime.strptime(clock_out, '%H:%M:%S')
+        if t_out < t_in:
+            diff = (t_out + timedelta(days=1)) - t_in
+        else:
+            diff = t_out - t_in
+        total_seconds = int(diff.total_seconds())
+        hours = total_seconds // 3600
+        mins = (total_seconds % 3600) // 60
+        return f"{hours}h {mins:02d}m"
+    except Exception:
+        return None
+
+
+def get_user_leave_summary(user_id):
+    """Get leave balances: PL (Paid Leave), UL (Unpaid Leave), LWP (Leave Without Pay)"""
+    conn = get_db_connection()
+    user = conn.execute("SELECT pl_quota FROM users WHERE id = ?", (user_id,)).fetchone()
+    pl_quota = user['pl_quota'] if user and user['pl_quota'] is not None else 18
+
+    pl_used = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'PL'", (user_id,)
+    ).fetchone()[0]
+    ul_used = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'UL'", (user_id,)
+    ).fetchone()[0]
+    lwp_used = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'LWP'", (user_id,)
+    ).fetchone()[0]
+    legacy_leave = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'Leave'", (user_id,)
+    ).fetchone()[0]
+    pl_used += legacy_leave
+    conn.close()
+
+    return {
+        'pl_quota': pl_quota,
+        'pl_used': pl_used,
+        'pl_balance': max(0, pl_quota - pl_used),
+        'ul_used': ul_used,
+        'lwp_used': lwp_used,
+        'total_leaves_taken': pl_used + ul_used + lwp_used
+    }
+
+
 def get_today_stats():
     today = today_str()
     conn  = get_db_connection()
@@ -169,21 +249,34 @@ def get_today_stats():
     absent  = conn.execute(
         "SELECT COUNT(*) FROM attendance WHERE date=? AND status='Absent'", (today,)
     ).fetchone()[0]
+    pl_count = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='PL'", (today,)
+    ).fetchone()[0]
+    ul_count = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='UL'", (today,)
+    ).fetchone()[0]
+    lwp_count = conn.execute(
+        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='LWP'", (today,)
+    ).fetchone()[0]
     on_leave = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='Leave'", (today,)
+        "SELECT COUNT(*) FROM attendance WHERE date=? AND status IN ('Leave', 'PL', 'UL', 'LWP')", (today,)
     ).fetchone()[0]
-    in_office = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND clock_in IS NOT NULL AND clock_out IS NULL", (today,)
-    ).fetchone()[0]
+    try:
+        pending_leaves = conn.execute("SELECT COUNT(*) FROM leaves WHERE status='Pending'").fetchone()[0]
+    except Exception:
+        pending_leaves = 0
     conn.close()
-    not_arrived = total - present - absent - on_leave
+    not_arrived = max(0, total - present - absent - on_leave)
     return {
         'total': total,
         'present': present,
         'absent': absent,
         'on_leave': on_leave,
-        'in_office': in_office,
-        'not_arrived': max(not_arrived, 0),
+        'pl_today': pl_count,
+        'ul_today': ul_count,
+        'lwp_today': lwp_count,
+        'pending_leaves': pending_leaves,
+        'not_arrived': not_arrived,
     }
 
 
@@ -584,25 +677,63 @@ def staff_dashboard():
     if 'user_id' not in session or session['role'] != 'Staff':
         return redirect(url_for('login'))
 
+    user_id = session['user_id']
     today_day = ist_now().strftime('%A')
-    conn      = get_db_connection()
+    today = today_str()
+    conn = get_db_connection()
     user_data = conn.execute(
-        'SELECT shift, weekoff FROM users WHERE id = ?', (session['user_id'],)
+        'SELECT shift, weekoff, pl_quota FROM users WHERE id = ?', (user_id,)
     ).fetchone()
+
+    today_record = conn.execute(
+        'SELECT * FROM attendance WHERE user_id = ? AND date = ?', (user_id, today)
+    ).fetchone()
+
     logs = conn.execute(
-        'SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 30',
-        (session['user_id'],)
+        'SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 14',
+        (user_id,)
     ).fetchall()
+
+    try:
+        leave_requests = conn.execute(
+            'SELECT * FROM leaves WHERE user_id = ? ORDER BY applied_at DESC LIMIT 20',
+            (user_id,)
+        ).fetchall()
+    except Exception:
+        leave_requests = []
+
+    try:
+        notifications = conn.execute(
+            '''SELECT * FROM notifications 
+               WHERE user_id = ? OR user_id IS NULL 
+               ORDER BY created_at DESC LIMIT 20''',
+            (user_id,)
+        ).fetchall()
+    except Exception:
+        notifications = []
+
     conn.close()
+
+    leave_summary = get_user_leave_summary(user_id)
+
+    today_hours = None
+    if today_record and today_record['clock_in']:
+        if today_record['clock_out']:
+            today_hours = today_record['total_hours'] or calculate_hours_worked(today_record['clock_in'], today_record['clock_out'])
+        else:
+            today_hours = calculate_hours_worked(today_record['clock_in'], ist_now().strftime('%H:%M:%S'))
 
     return render_template(
         'staff.html',
+        today_record=today_record,
+        today_hours=today_hours,
         logs=logs,
-        roster=get_todays_roster(),
+        leave_summary=leave_summary,
+        leave_requests=leave_requests,
+        notifications=notifications,
         today_day=today_day,
         user_shift=user_data['shift'] if user_data else '09:00 AM - 06:00 PM',
         user_weekoff=user_data['weekoff'] if user_data else 'Sunday',
-        announcements=get_active_announcements(),
     )
 
 
@@ -617,6 +748,58 @@ def staff_history():
     ).fetchall()
     conn.close()
     return render_template('history.html', logs=logs)
+
+
+@app.route('/staff/leave/apply', methods=['POST'])
+def apply_leave():
+    if 'user_id' not in session or session['role'] != 'Staff':
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    leave_type = request.form.get('leave_type', '').strip().upper()
+    start_date = request.form.get('start_date', '').strip()
+    end_date = request.form.get('end_date', '').strip()
+    reason = request.form.get('reason', '').strip()
+
+    if leave_type not in ('PL', 'UL', 'LWP'):
+        flash("Invalid leave type. Please select PL, UL, or LWP.")
+        return redirect(url_for('staff_dashboard'))
+
+    if not start_date or not end_date:
+        flash("Both Start Date and End Date are required.")
+        return redirect(url_for('staff_dashboard'))
+
+    try:
+        d_start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        d_end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    except ValueError:
+        flash("Invalid date format. Use YYYY-MM-DD.")
+        return redirect(url_for('staff_dashboard'))
+
+    if d_end < d_start:
+        flash("End date cannot be earlier than start date.")
+        return redirect(url_for('staff_dashboard'))
+
+    days_requested = (d_end - d_start).days + 1
+
+    if leave_type == 'PL':
+        summary = get_user_leave_summary(user_id)
+        if days_requested > summary['pl_balance']:
+            flash(f"Insufficient PL balance! Requested: {days_requested} day(s), Available: {summary['pl_balance']}. Consider applying for UL or LWP.")
+            return redirect(url_for('staff_dashboard'))
+
+    conn = get_db_connection()
+    conn.execute(
+        '''INSERT INTO leaves (user_id, leave_type, start_date, end_date, days, reason, status, applied_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)''',
+        (user_id, leave_type, start_date, end_date, days_requested, reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+    )
+    conn.commit()
+    conn.close()
+
+    log_audit('LEAVE_APPLIED', f"{leave_type}: {start_date} to {end_date} ({days_requested}d)", user_id)
+    flash(f"✅ Leave application submitted for {days_requested} day(s) ({leave_type}).")
+    return redirect(url_for('staff_dashboard'))
 
 
 @app.route('/clock', methods=['POST'])
@@ -647,11 +830,13 @@ def clock():
             flash('You have already clocked in today.')
     elif action == 'out':
         if record and not record['clock_out']:
+            tot_hrs = calculate_hours_worked(record['clock_in'], now_time)
             conn.execute(
-                'UPDATE attendance SET clock_out = ? WHERE id = ?', (now_time, record['id'])
+                'UPDATE attendance SET clock_out = ?, total_hours = ? WHERE id = ?',
+                (now_time, tot_hrs, record['id'])
             )
             log_audit('CLOCK_OUT', today, user_id)
-            flash(f'👋 Clocked out at {now_time}')
+            flash(f'👋 Clocked out at {now_time}. Work duration: {tot_hrs or ""}')
         else:
             flash('You must clock in first, or have already clocked out.')
 
@@ -669,25 +854,67 @@ def admin_dashboard():
         return redirect(url_for('login'))
 
     today_day = ist_now().strftime('%A')
+    today = today_str()
     conn  = get_db_connection()
     users = conn.execute(
-        "SELECT id, username, department, shift, weekoff FROM users WHERE role != 'Admin' ORDER BY department, username"
+        "SELECT id, username, department, shift, weekoff, pl_quota FROM users WHERE role != 'Admin' ORDER BY department, username"
     ).fetchall()
-    announcements = conn.execute(
-        "SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20"
-    ).fetchall()
+
+    try:
+        pending_leaves = conn.execute('''
+            SELECT l.*, u.username, u.department
+            FROM leaves l
+            JOIN users u ON l.user_id = u.id
+            WHERE l.status = 'Pending'
+            ORDER BY l.applied_at ASC
+        ''').fetchall()
+    except Exception:
+        pending_leaves = []
+
+    try:
+        recent_leaves = conn.execute('''
+            SELECT l.*, u.username, u.department
+            FROM leaves l
+            JOIN users u ON l.user_id = u.id
+            WHERE l.status != 'Pending'
+            ORDER BY l.reviewed_at DESC LIMIT 15
+        ''').fetchall()
+    except Exception:
+        recent_leaves = []
+
+    try:
+        warnings = conn.execute('''
+            SELECT n.*, u.username
+            FROM notifications n
+            LEFT JOIN users u ON n.user_id = u.id
+            ORDER BY n.created_at DESC LIMIT 30
+        ''').fetchall()
+    except Exception:
+        warnings = []
+
+    attendance_records = conn.execute('''
+        SELECT u.username, u.department, u.shift, u.weekoff,
+               a.clock_in, a.clock_out, a.total_hours, a.status
+        FROM users u
+        LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
+        WHERE u.role != 'Admin'
+        ORDER BY u.department, u.username
+    ''', (today,)).fetchall()
+
     conn.close()
 
     return render_template(
         'admin.html',
         users=users,
-        roster=get_todays_roster(),
+        pending_leaves=pending_leaves,
+        recent_leaves=recent_leaves,
+        warnings=warnings,
+        attendance_records=attendance_records,
         today_day=today_day,
         shift_options=SHIFT_OPTIONS,
         weekday_options=WEEKDAY_OPTIONS,
         departments=ALLOWED_DEPARTMENTS,
         stats=get_today_stats(),
-        announcements=announcements,
     )
 
 
@@ -799,6 +1026,8 @@ def admin_action():
             new_pass = request.form.get('new_password', '')
             dept     = request.form.get('department', '')
             weekoff  = request.form.get('weekoff', 'Sunday')
+            pl_quota = request.form.get('pl_quota', '18').strip()
+            pl_val   = int(pl_quota) if pl_quota.isdigit() else 18
 
             if not new_user or not new_pass or dept not in ALLOWED_DEPARTMENTS:
                 flash("Invalid input.")
@@ -807,12 +1036,12 @@ def admin_action():
             else:
                 try:
                     conn.execute(
-                        "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
+                        "INSERT INTO users (username, password, department, role, shift, weekoff, pl_quota, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
                         (new_user, generate_password_hash(new_pass), dept, 'Staff',
-                         '09:00 AM - 06:00 PM', weekoff, 'Set by admin', 'yes')
+                         '09:00 AM - 06:00 PM', weekoff, pl_val, 'Set by admin', 'yes')
                     )
                     log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
-                    flash(f"✅ Employee '{new_user}' created.")
+                    flash(f"✅ Employee '{new_user}' created with {pl_val} PL quota.")
                 except sqlite3.IntegrityError:
                     flash(f"Username '{new_user}' already exists.")
 
@@ -853,10 +1082,20 @@ def admin_action():
                 log_audit('SHIFT_UPDATED', f"{target}: {new_shift}", session['user_id'])
                 flash(f"✅ Schedule updated for '{target}'.")
 
+        elif action_type == 'update_pl_quota':
+            target = request.form.get('target_user', '').strip()
+            pl_quota = request.form.get('pl_quota', '').strip()
+            if pl_quota.isdigit():
+                conn.execute("UPDATE users SET pl_quota=? WHERE username=?", (int(pl_quota), target))
+                log_audit('PL_QUOTA_UPDATED', f"{target}: {pl_quota}", session['user_id'])
+                flash(f"✅ Annual PL Quota for '{target}' set to {pl_quota} days.")
+            else:
+                flash("Invalid quota value.")
+
         elif action_type == 'mark_leave':
             target = request.form.get('target_user', '').strip()
             status = request.form.get('status', '')
-            if status not in ('Leave', 'Absent'):
+            if status not in ('PL', 'UL', 'LWP', 'Present', 'Absent', 'Half-Day'):
                 flash("Invalid status.")
             else:
                 today = today_str()
@@ -876,6 +1115,99 @@ def admin_action():
                     flash(f"✅ '{target}' marked as {status}.")
                 else:
                     flash("User not found.")
+
+        elif action_type == 'approve_leave':
+            leave_id = request.form.get('leave_id')
+            admin_remark = request.form.get('admin_remark', '').strip()
+            leave = conn.execute("SELECT * FROM leaves WHERE id = ?", (leave_id,)).fetchone()
+            if leave and leave['status'] == 'Pending':
+                now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+                conn.execute(
+                    "UPDATE leaves SET status='Approved', reviewed_by=?, reviewed_at=?, admin_remark=? WHERE id=?",
+                    (session['username'], now_str, admin_remark, leave_id)
+                )
+                try:
+                    cur_dt = datetime.strptime(leave['start_date'], '%Y-%m-%d').date()
+                    end_dt = datetime.strptime(leave['end_date'], '%Y-%m-%d').date()
+                    while cur_dt <= end_dt:
+                        dt_s = cur_dt.strftime('%Y-%m-%d')
+                        rec = conn.execute("SELECT id FROM attendance WHERE user_id=? AND date=?", (leave['user_id'], dt_s)).fetchone()
+                        if rec:
+                            conn.execute("UPDATE attendance SET status=? WHERE id=?", (leave['leave_type'], rec['id']))
+                        else:
+                            conn.execute(
+                                "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
+                                (leave['user_id'], dt_s, leave['leave_type'])
+                            )
+                        cur_dt += timedelta(days=1)
+                except Exception as e:
+                    logger.error(f"Error marking attendance for leave: {e}")
+
+                conn.execute(
+                    "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
+                    (leave['user_id'], 'notice', f"Leave Approved: {leave['leave_type']}",
+                     f"Your {leave['leave_type']} request from {leave['start_date']} to {leave['end_date']} has been approved. {admin_remark}",
+                     now_str, session['username'])
+                )
+                log_audit('LEAVE_APPROVED', f"Leave #{leave_id} ({leave['leave_type']})", session['user_id'])
+                flash(f"✅ Leave #{leave_id} approved as {leave['leave_type']}.")
+            else:
+                flash("Leave record not found or already reviewed.")
+
+        elif action_type == 'reject_leave':
+            leave_id = request.form.get('leave_id')
+            admin_remark = request.form.get('admin_remark', '').strip()
+            leave = conn.execute("SELECT * FROM leaves WHERE id = ?", (leave_id,)).fetchone()
+            if leave and leave['status'] == 'Pending':
+                now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+                conn.execute(
+                    "UPDATE leaves SET status='Rejected', reviewed_by=?, reviewed_at=?, admin_remark=? WHERE id=?",
+                    (session['username'], now_str, admin_remark, leave_id)
+                )
+                conn.execute(
+                    "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
+                    (leave['user_id'], 'warning', f"Leave Rejected: {leave['leave_type']}",
+                     f"Your {leave['leave_type']} request ({leave['start_date']} to {leave['end_date']}) was rejected. Reason: {admin_remark or 'No remark'}",
+                     now_str, session['username'])
+                )
+                log_audit('LEAVE_REJECTED', f"Leave #{leave_id}", session['user_id'])
+                flash(f"Leave #{leave_id} rejected.")
+            else:
+                flash("Leave record not found or already reviewed.")
+
+        elif action_type == 'issue_warning':
+            target = request.form.get('target_user', '').strip()
+            warn_title = request.form.get('warn_title', '').strip()
+            warn_msg = request.form.get('warn_message', '').strip()
+            warn_type = request.form.get('warn_type', 'warning')
+            if not warn_title or not warn_msg:
+                flash("Title and message are required.")
+            else:
+                now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+                target_id = None
+                if target != 'All':
+                    u = conn.execute("SELECT id FROM users WHERE username=?", (target,)).fetchone()
+                    if u:
+                        target_id = u['id']
+                    else:
+                        flash("User not found.")
+                        target = None
+                if target:
+                    conn.execute(
+                        "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
+                        (target_id, warn_type, warn_title, warn_msg, now_str, session['username'])
+                    )
+                    log_audit('WARNING_ISSUED', f"To {target}: {warn_title}", session['user_id'])
+                    flash(f"✅ Warning/Notice issued to {target}.")
+
+        elif action_type == 'delete_warning':
+            warn_id = request.form.get('warn_id', '')
+            if warn_id.isdigit():
+                conn.execute("DELETE FROM notifications WHERE id=?", (int(warn_id),))
+                log_audit('WARNING_DELETED', f"ID: {warn_id}", session['user_id'])
+                flash("✅ Notice/Warning removed.")
+            else:
+                flash("Invalid ID.")
 
         elif action_type == 'post_announcement':
             title    = request.form.get('ann_title', '').strip()

@@ -1,18 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard — {{ company_name }}{% endblock %}
+{% block title %}Employee Portal — {{ company_name }}{% endblock %}
 
 {% block head %}
 <style>
-  .dashboard-container { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
+  .dashboard-container { max-width: 1300px; margin: 0 auto; padding: 1.25rem; }
+  .stat-grid-leaves { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+  .clock-box { background: linear-gradient(135deg, rgba(0,217,255,0.1), rgba(57,255,20,0.05)); border: 1px solid var(--glass-border); border-radius: 0.75rem; }
+  .warning-card { border-left: 4px solid var(--danger); background: rgba(239, 68, 68, 0.1); border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; }
+  .notice-card { border-left: 4px solid var(--accent-cyan); background: rgba(0, 217, 255, 0.08); border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; }
+  .shift-summary-box { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 0.75rem; padding: 1.25rem; }
+  .leave-type-badge { font-weight: 700; padding: 0.35rem 0.65rem; border-radius: 0.4rem; font-size: 0.8rem; letter-spacing: 0.05em; }
+  .badge-pl { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; }
+  .badge-ul { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid #f59e0b; }
+  .badge-lwp { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
   @media (max-width: 767px) {
     .dashboard-container { padding: 1rem 0.75rem; }
-    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .stat-grid-leaves { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
   }
-  @media (min-width: 768px) {
-    .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
-  }
-  .clock-box { background: linear-gradient(135deg, rgba(0,217,255,0.1), rgba(57,255,20,0.05)); }
 </style>
 {% endblock %}
 
@@ -20,10 +25,10 @@
 <div class="dashboard-container">
 
   <!-- Page Header -->
-  <div class="page-header">
+  <div class="page-header mb-3">
     <div>
       <div class="page-title">Welcome, {{ session['username'] }}</div>
-      <p class="page-subtitle" style="margin-top: 0.5rem;">
+      <p class="page-subtitle" style="margin-top: 0.35rem;">
         <span class="badge badge-status status-online">
           <span class="status-dot"></span>
           {{ user_shift }}
@@ -33,156 +38,287 @@
         </span>
       </p>
     </div>
-    <div class="d-flex gap-2" style="flex-wrap: wrap;">
-      <div class="elevated-card clock-box p-3" style="border: 1px solid var(--glass-border); border-radius: 0.75rem;">
-        <div id="liveClock">--:--:-- IST</div>
+    <div class="d-flex gap-2" style="flex-wrap: wrap; align-items: center;">
+      <div class="clock-box px-3 py-2">
+        <div id="liveClock" style="font-size: 0.95rem; font-weight: 600;">--:--:-- IST</div>
       </div>
       <button id="theme-toggle" class="theme-toggle"></button>
-      <a href="/logout" class="btn btn-danger-glow" style="padding: 0.65rem 1.25rem;">Logout</a>
+      <a href="/logout" class="btn btn-danger-glow" style="padding: 0.55rem 1.15rem;">Logout</a>
     </div>
   </div>
 
-  <!-- Flash Alerts -->
+  <!-- Flash Messages -->
   {% with messages = get_flashed_messages() %}
     {% if messages %}
       {% for msg in messages %}
-        <div class="flash-alert alert alert-success" role="alert">{{ msg }}</div>
+        <div class="flash-alert alert alert-info mb-3" role="alert">{{ msg }}</div>
       {% endfor %}
     {% endif %}
   {% endwith %}
 
-  <!-- Announcements -->
-  {% if announcements %}
-  <div class="mb-3">
-    <h3 class="page-subtitle">📢 Announcements</h3>
-    {% for ann in announcements %}
-      <div class="announcement-banner {{ ann.priority }}">
-        <div class="announcement-title">
-          {% if ann.priority == 'urgent' %}🔴{% elif ann.priority == 'high' %}🟠{% else %}🔵{% endif %}
-          {{ ann.title }}
+  <!-- 1. NOTIFICATIONS & OFFICIAL WARNINGS -->
+  {% if notifications %}
+  <div class="elevated-card p-4 mb-4">
+    <h5 class="page-subtitle mb-3" style="color: var(--accent-gold);">⚠️ Notifications & HR Notices</h5>
+    <div style="max-height: 250px; overflow-y: auto;">
+      {% for n in notifications %}
+        {% if n.type in ('warning', 'urgent') %}
+        <div class="warning-card">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <strong style="color: var(--danger);">🚨 {{ n.title }}</strong>
+            <small class="text-muted">{{ n.created_at[:16] }}</small>
+          </div>
+          <div style="font-size: 0.9rem;">{{ n.message }}</div>
         </div>
-        <div class="announcement-body">{{ ann.body }}</div>
-        <div class="announcement-meta">{{ ann.created_at[:10] }} • by {{ ann.created_by }}</div>
-      </div>
-    {% endfor %}
+        {% else %}
+        <div class="notice-card">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <strong style="color: var(--accent-cyan);">📢 {{ n.title }}</strong>
+            <small class="text-muted">{{ n.created_at[:16] }}</small>
+          </div>
+          <div style="font-size: 0.9rem;">{{ n.message }}</div>
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
   </div>
   {% endif %}
 
   <div class="row g-3 mb-4">
-    <!-- Clock Section -->
+    <!-- 2. ATTENDANCE & SHIFT CLOCK -->
     <div class="col-lg-5 col-md-12">
-      <div class="elevated-card p-4">
-        <h3 class="page-subtitle mb-4 text-center">⏱️ Shift Clock</h3>
-        <form action="/clock" method="POST" class="d-grid gap-2">
-          <button type="submit" name="action" value="in" class="btn btn-clock-in">
-            ✅ Clock IN
-          </button>
-          <button type="submit" name="action" value="out" class="btn btn-clock-out">
-            🚪 Clock OUT
-          </button>
-        </form>
-      </div>
-
-      <!-- Personal Logs -->
-      <div class="elevated-card p-4 mt-3">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="page-subtitle mb-0">📋 Your Recent Logs</h5>
-          <a href="/staff/history" class="btn btn-secondary-glow btn-sm">View All</a>
-        </div>
-        <div class="table-responsive">
-          <table class="table-premium table-sm">
-            <thead>
-              <tr><th>Date</th><th>In</th><th>Out</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              {% for log in logs %}
-              <tr>
-                <td style="font-size: 0.85rem;">{{ log.date }}</td>
-                <td class="text-success fw-bold" style="font-size: 0.85rem;">{{ log.clock_in or '—' }}</td>
-                <td class="text-warning fw-bold" style="font-size: 0.85rem;">{{ log.clock_out or '—' }}</td>
-                <td style="font-size: 0.85rem;">
-                  {% if log.status == 'Leave' %}
-                    <span class="badge badge-status status-away">Leave</span>
-                  {% elif log.status == 'Absent' %}
-                    <span class="badge badge-status status-absent">Absent</span>
-                  {% elif log.clock_in %}
-                    <span class="badge badge-status status-online">Present</span>
-                  {% else %}
-                    <span class="badge bg-secondary">—</span>
-                  {% endif %}
-                </td>
-              </tr>
+      <div class="elevated-card p-4 h-100">
+        <h5 class="page-subtitle mb-3 text-center">⏱️ Daily Attendance Clock</h5>
+        
+        <!-- Current Shift Status Box -->
+        <div class="shift-summary-box mb-3 text-center">
+          <div class="text-muted small mb-1">TODAY'S STATUS</div>
+          <div class="mb-2">
+            {% if today_record %}
+              {% if today_record.status in ('PL', 'UL', 'LWP') %}
+                <span class="badge badge-{{ today_record.status | lower }} fs-6">{{ today_record.status }} (On Leave)</span>
+              {% elif today_record.clock_in and today_record.clock_out %}
+                <span class="badge badge-status status-online fs-6">Shift Completed</span>
+              {% elif today_record.clock_in %}
+                <span class="badge badge-status status-online fs-6">🟢 In Shift (Active)</span>
+              {% elif today_record.status == 'Absent' %}
+                <span class="badge badge-status status-absent fs-6">Marked Absent</span>
               {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-4">No records yet.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+                <span class="badge bg-secondary fs-6">{{ today_record.status }}</span>
+              {% endif %}
+            {% else %}
+              <span class="badge bg-secondary fs-6">Not Clocked In Today</span>
+            {% endif %}
+          </div>
+
+          <div class="row g-2 mt-2 pt-2 border-top border-secondary">
+            <div class="col-4">
+              <div class="text-muted" style="font-size: 0.75rem;">CLOCK IN</div>
+              <div class="fw-bold text-success" style="font-size: 0.9rem;">
+                {{ today_record.clock_in if today_record and today_record.clock_in else '—' }}
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="text-muted" style="font-size: 0.75rem;">CLOCK OUT</div>
+              <div class="fw-bold text-warning" style="font-size: 0.9rem;">
+                {{ today_record.clock_out if today_record and today_record.clock_out else '—' }}
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="text-muted" style="font-size: 0.75rem;">DURATION</div>
+              <div class="fw-bold text-primary" style="font-size: 0.9rem;">
+                {{ today_hours if today_hours else '—' }}
+              </div>
+            </div>
+          </div>
         </div>
+
+        <!-- Clock Action Buttons -->
+        <form action="/clock" method="POST" class="d-grid gap-2">
+          {% if not today_record or not today_record.clock_in %}
+            <button type="submit" name="action" value="in" class="btn btn-clock-in py-2">
+              ✅ Clock IN
+            </button>
+            <button type="button" class="btn btn-secondary py-2" disabled>
+              🚪 Clock OUT
+            </button>
+          {% elif today_record.clock_in and not today_record.clock_out %}
+            <button type="button" class="btn btn-clock-in py-2" disabled style="opacity: 0.65;">
+              ✅ Clocked In at {{ today_record.clock_in }}
+            </button>
+            <button type="submit" name="action" value="out" class="btn btn-clock-out py-2">
+              🚪 Clock OUT
+            </button>
+          {% else %}
+            <button type="button" class="btn btn-secondary py-2" disabled>
+              🏁 Shift Ended ({{ today_record.clock_out }})
+            </button>
+          {% endif %}
+        </form>
       </div>
     </div>
 
-    <!-- Team Roster -->
+    <!-- 3. PL / UL / LWP LEAVE TRACKER -->
     <div class="col-lg-7 col-md-12">
-      <div class="elevated-card p-4">
+      <div class="elevated-card p-4 h-100">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="page-subtitle mb-0">🏢 Team Presence</h5>
-          <span class="badge bg-secondary" id="refreshBadge">60s</span>
+          <h5 class="page-subtitle mb-0">🌴 Leave Tracker (PL / UL / LWP)</h5>
+          <button class="btn btn-primary-glow btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#applyLeaveCollapse">
+            ➕ Apply Leave
+          </button>
         </div>
+
+        <!-- Leave Balance Cards -->
+        <div class="stat-grid-leaves mb-3">
+          <div class="stat-card">
+            <div class="stat-number text-success">{{ leave_summary.pl_balance }} <span style="font-size: 0.8rem; color: var(--text-muted);">/ {{ leave_summary.pl_quota }}</span></div>
+            <div class="stat-label">PL Available</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number text-info">{{ leave_summary.pl_used }}</div>
+            <div class="stat-label">PL Used</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number text-warning">{{ leave_summary.ul_used }}</div>
+            <div class="stat-label">UL (Unpaid)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number text-danger">{{ leave_summary.lwp_used }}</div>
+            <div class="stat-label">LWP Days</div>
+          </div>
+        </div>
+
+        <!-- Apply Leave Collapsible Form -->
+        <div class="collapse mb-3" id="applyLeaveCollapse">
+          <div class="shift-summary-box">
+            <h6 class="page-subtitle mb-2" style="font-size: 0.95rem;">Submit Leave Request</h6>
+            <form action="/staff/leave/apply" method="POST">
+              <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                  <label class="section-label">Leave Type</label>
+                  <select name="leave_type" class="form-select form-select-sm" required>
+                    <option value="PL">🟢 PL — Paid Leave ({{ leave_summary.pl_balance }} left)</option>
+                    <option value="UL">🟡 UL — Unpaid Leave</option>
+                    <option value="LWP">🔴 LWP — Leave Without Pay</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="section-label">Start Date</label>
+                  <input type="date" name="start_date" class="form-control form-control-sm" required>
+                </div>
+                <div class="col-md-4">
+                  <label class="section-label">End Date</label>
+                  <input type="date" name="end_date" class="form-control form-control-sm" required>
+                </div>
+              </div>
+              <div class="mb-2">
+                <label class="section-label">Reason</label>
+                <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason for leave application..." required maxlength="200">
+              </div>
+              <div class="d-flex justify-content-end gap-2">
+                <button type="button" class="btn btn-secondary-glow btn-sm" data-bs-toggle="collapse" data-bs-target="#applyLeaveCollapse">Cancel</button>
+                <button type="submit" class="btn btn-primary-glow btn-sm">Submit Request</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Recent Leave Requests Table -->
+        <h6 class="section-label mb-2">My Recent Applications</h6>
         <div class="table-responsive">
-          <table class="table-premium table-sm" id="rosterTable">
+          <table class="table-premium table-sm">
             <thead>
-              <tr><th>Name</th><th class="d-none d-md-table-cell">Dept</th><th class="d-none d-lg-table-cell">Shift</th><th>Status</th><th>In</th></tr>
+              <tr><th>Type</th><th>Duration</th><th>Days</th><th>Reason</th><th>Status</th></tr>
             </thead>
             <tbody>
-              {% for row in roster %}
+              {% for req in leave_requests %}
               <tr>
-                <td class="fw-bold" style="font-size: 0.9rem;">{{ row.username }}</td>
-                <td class="d-none d-md-table-cell" style="font-size: 0.85rem;"><span class="badge bg-secondary">{{ row.department }}</span></td>
-                <td class="d-none d-lg-table-cell" style="font-size: 0.8rem;">{{ row.shift }}</td>
-                <td style="font-size: 0.85rem;">
-                  {% if row.status == 'Leave' %}
-                    <span class="badge badge-status status-away">Leave</span>
-                  {% elif row.status == 'Absent' %}
-                    <span class="badge badge-status status-absent">Absent</span>
-                  {% elif row.weekoff == today_day and not row.clock_in %}
-                    <span class="badge bg-secondary">Week Off</span>
-                  {% elif row.clock_in and row.clock_out %}
-                    <span class="badge bg-secondary">Shift Ended</span>
-                  {% elif row.clock_in and not row.clock_out %}
-                    <span class="badge badge-status status-online">In Office</span>
+                <td><span class="leave-type-badge badge-{{ req.leave_type | lower }}">{{ req.leave_type }}</span></td>
+                <td style="font-size: 0.85rem;">{{ req.start_date }} → {{ req.end_date }}</td>
+                <td class="fw-bold" style="font-size: 0.85rem;">{{ req.days }}d</td>
+                <td style="font-size: 0.85rem; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ req.reason }}">{{ req.reason }}</td>
+                <td>
+                  {% if req.status == 'Approved' %}
+                    <span class="badge bg-success" title="Approved by {{ req.reviewed_by or 'Admin' }}">✅ Approved</span>
+                  {% elif req.status == 'Rejected' %}
+                    <span class="badge bg-danger" title="{{ req.admin_remark }}">❌ Rejected</span>
                   {% else %}
-                    <span class="badge bg-secondary opacity-50">Not Here</span>
+                    <span class="badge bg-warning text-dark">⏳ Pending</span>
                   {% endif %}
                 </td>
-                <td class="text-success fw-bold" style="font-size: 0.85rem;">{{ row.clock_in or '—' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="5" class="text-center text-muted py-4">No staff found.</td></tr>
+              <tr><td colspan="5" class="text-center text-muted py-3">No leave applications submitted yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+
       </div>
+    </div>
+  </div>
+
+  <!-- 4. PERSONAL ATTENDANCE LOGS (Last 14 Days) -->
+  <div class="elevated-card p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <h5 class="page-subtitle mb-0">📋 Your Personal Attendance Logs</h5>
+        <p class="text-muted small mb-0">Private record of your daily shift timings</p>
+      </div>
+      <a href="/staff/history" class="btn btn-secondary-glow btn-sm">View Full History</a>
+    </div>
+    
+    <div class="table-responsive">
+      <table class="table-premium table-sm">
+        <thead>
+          <tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Duration</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          <tr>
+            <td class="fw-bold" style="font-size: 0.9rem;">{{ log.date }}</td>
+            <td class="text-success fw-bold" style="font-size: 0.85rem;">{{ log.clock_in or '—' }}</td>
+            <td class="text-warning fw-bold" style="font-size: 0.85rem;">{{ log.clock_out or '—' }}</td>
+            <td class="text-primary fw-bold" style="font-size: 0.85rem;">{{ log.total_hours or '—' }}</td>
+            <td>
+              {% if log.status in ('PL', 'UL', 'LWP') %}
+                <span class="leave-type-badge badge-{{ log.status | lower }}">{{ log.status }}</span>
+              {% elif log.status == 'Leave' %}
+                <span class="leave-type-badge badge-pl">PL</span>
+              {% elif log.status == 'Absent' %}
+                <span class="badge badge-status status-absent">Absent</span>
+              {% elif log.clock_in %}
+                <span class="badge badge-status status-online">Present</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ log.status or '—' }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No attendance records found yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 
 </div>
 
-<!-- Mobile Bottom Nav -->
+<!-- Mobile Bottom Navigation -->
 <nav class="mobile-bottom-nav">
-  <a href="/staff" data-target="clock" class="active">
+  <a href="/staff" class="active">
     <span class="nav-icon">⏱️</span>
     <span>Clock</span>
   </a>
-  <a href="/staff/history" data-target="history">
+  <a href="#applyLeaveCollapse" data-bs-toggle="collapse">
+    <span class="nav-icon">🌴</span>
+    <span>Leaves</span>
+  </a>
+  <a href="/staff/history">
     <span class="nav-icon">📋</span>
     <span>History</span>
   </a>
-  <a href="/staff" data-target="team">
-    <span class="nav-icon">🏢</span>
-    <span>Team</span>
-  </a>
-  <a href="/logout" data-target="logout">
+  <a href="/logout">
     <span class="nav-icon">🚪</span>
     <span>Logout</span>
   </a>
@@ -195,7 +331,6 @@
   document.addEventListener('DOMContentLoaded', () => {
     initClock();
     initAlertToasts();
-    initAutoRefresh();
     initMobileNav();
   });
 </script>

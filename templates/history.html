@@ -2,39 +2,62 @@
 
 {% block title %}History — {{ company_name }}{% endblock %}
 
-{% block body %}
-<div style="max-width: 1000px; margin: 0 auto; padding: 1.25rem;">
+{% block head %}
+<style>
+  .leave-type-badge { font-weight: 700; padding: 0.25rem 0.5rem; border-radius: 0.35rem; font-size: 0.8rem; letter-spacing: 0.05em; }
+  .badge-pl { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; }
+  .badge-ul { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid #f59e0b; }
+  .badge-lwp { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
+</style>
+{% endblock %}
 
-  <div class="page-header">
+{% block body %}
+<div style="max-width: 1100px; margin: 0 auto; padding: 1.25rem;">
+
+  <div class="page-header mb-3">
     <div>
       <div class="page-title">📋 Your Attendance History</div>
-      <p class="page-subtitle">Complete record on file</p>
+      <p class="page-subtitle">Personal attendance and leave record on file</p>
     </div>
     <a href="/staff" class="btn btn-secondary-glow">← Back to Dashboard</a>
   </div>
 
   <!-- Stats -->
   {% set present_count = logs | selectattr('clock_in') | list | length %}
+  {% set pl_count = logs | selectattr('status', 'in', ['PL', 'Leave']) | list | length %}
+  {% set ul_count = logs | selectattr('status', 'equalto', 'UL') | list | length %}
+  {% set lwp_count = logs | selectattr('status', 'equalto', 'LWP') | list | length %}
   {% set absent_count  = logs | selectattr('status', 'equalto', 'Absent') | list | length %}
-  {% set leave_count   = logs | selectattr('status', 'equalto', 'Leave') | list | length %}
   
-  <div class="row g-3 mb-4">
-    <div class="col-4">
+  <div class="row g-2 mb-4">
+    <div class="col">
       <div class="stat-card">
-        <div class="stat-number">{{ present_count }}</div>
-        <div class="stat-label">Present Days</div>
+        <div class="stat-number text-success">{{ present_count }}</div>
+        <div class="stat-label">Present</div>
       </div>
     </div>
-    <div class="col-4">
+    <div class="col">
       <div class="stat-card">
-        <div class="stat-number">{{ absent_count }}</div>
-        <div class="stat-label">Absent Days</div>
+        <div class="stat-number text-info">{{ pl_count }}</div>
+        <div class="stat-label">PL Days</div>
       </div>
     </div>
-    <div class="col-4">
+    <div class="col">
       <div class="stat-card">
-        <div class="stat-number">{{ leave_count }}</div>
-        <div class="stat-label">Leave Days</div>
+        <div class="stat-number text-warning">{{ ul_count }}</div>
+        <div class="stat-label">UL Days</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="stat-card">
+        <div class="stat-number text-danger">{{ lwp_count }}</div>
+        <div class="stat-label">LWP Days</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="stat-card">
+        <div class="stat-number text-muted">{{ absent_count }}</div>
+        <div class="stat-label">Absent</div>
       </div>
     </div>
   </div>
@@ -44,29 +67,27 @@
     <div class="table-responsive">
       <table class="table-premium">
         <thead>
-          <tr><th>#</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr>
+          <tr><th>#</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Duration</th><th>Status</th></tr>
         </thead>
         <tbody>
           {% for log in logs %}
-          {% if log.clock_in and log.clock_out %}
-            {% set h_in  = log.clock_in.split(':') %}
-            {% set h_out = log.clock_out.split(':') %}
-            {% set mins = (h_out[0]|int * 60 + h_out[1]|int) - (h_in[0]|int * 60 + h_in[1]|int) %}
-            {% set hrs = (mins / 60) | round(1) %}
-          {% else %}
-            {% set hrs = '—' %}
-          {% endif %}
           <tr>
             <td style="font-size: 0.85rem; color: var(--text-muted);">{{ loop.index }}</td>
             <td style="font-weight: 600;">{{ log.date }}</td>
             <td class="text-success fw-bold">{{ log.clock_in or '—' }}</td>
             <td class="text-warning fw-bold">{{ log.clock_out or '—' }}</td>
-            <td class="text-primary fw-bold">{{ hrs }}{% if hrs != '—' %}h{% endif %}</td>
+            <td class="text-primary fw-bold">{{ log.total_hours or '—' }}</td>
             <td>
-              {% if log.status == 'Leave' %}<span class="badge badge-status status-away">Leave</span>
-              {% elif log.status == 'Absent' %}<span class="badge badge-status status-absent">Absent</span>
-              {% elif log.clock_in %}<span class="badge badge-status status-online">Present</span>
-              {% else %}<span class="badge bg-secondary">—</span>
+              {% if log.status in ('PL', 'UL', 'LWP') %}
+                <span class="leave-type-badge badge-{{ log.status | lower }}">{{ log.status }}</span>
+              {% elif log.status == 'Leave' %}
+                <span class="leave-type-badge badge-pl">PL</span>
+              {% elif log.status == 'Absent' %}
+                <span class="badge badge-status status-absent">Absent</span>
+              {% elif log.clock_in %}
+                <span class="badge badge-status status-online">Present</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ log.status or '—' }}</span>
               {% endif %}
             </td>
           </tr>

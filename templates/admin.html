@@ -5,12 +5,16 @@
 {% block head %}
 <style>
   .admin-container { max-width: 1600px; margin: 0 auto; padding: 1.25rem; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1rem; }
+  .leave-type-badge { font-weight: 700; padding: 0.25rem 0.5rem; border-radius: 0.35rem; font-size: 0.75rem; letter-spacing: 0.05em; }
+  .badge-pl { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; }
+  .badge-ul { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid #f59e0b; }
+  .badge-lwp { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
+  .warning-entry { border-left: 3px solid var(--danger); background: rgba(239, 68, 68, 0.08); padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 0.6rem; }
+  .notice-entry { border-left: 3px solid var(--accent-cyan); background: rgba(0, 217, 255, 0.06); padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 0.6rem; }
   @media (max-width: 767px) {
     .admin-container { padding: 1rem 0.75rem; }
-    .admin-cols { flex-direction: column; }
-  }
-  @media (min-width: 768px) {
-    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+    .stat-grid { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
   }
 </style>
 {% endblock %}
@@ -19,125 +23,250 @@
 <div class="admin-container">
 
   <!-- Page Header -->
-  <div class="page-header">
+  <div class="page-header mb-3">
     <div>
-      <div class="page-title">👨‍💼 Admin Dashboard</div>
+      <div class="page-title">👨‍💼 Attendance & Leave Management</div>
       <p class="page-subtitle">{{ today_day }} • {{ company_name }}</p>
     </div>
     <div class="d-flex gap-2" style="flex-wrap: wrap; align-items: center;">
       <a href="/admin/analytics" class="btn btn-secondary-glow btn-sm">📊 Analytics</a>
+      <a href="/admin/system" class="btn btn-secondary-glow btn-sm">🖥️ System</a>
       <button id="theme-toggle" class="theme-toggle"></button>
-      <a href="/logout" class="btn btn-danger-glow" style="padding: 0.65rem 1.25rem;">Logout</a>
+      <a href="/logout" class="btn btn-danger-glow" style="padding: 0.55rem 1.15rem;">Logout</a>
     </div>
   </div>
 
-  <!-- Stats Cards -->
+  <!-- Metric Cards -->
   <div class="stat-grid mb-4">
     <div class="stat-card">
       <div class="stat-number">{{ stats.total }}</div>
       <div class="stat-label">Total Staff</div>
     </div>
     <div class="stat-card">
-      <div class="stat-number" style="background: linear-gradient(135deg, #10b981, #059669); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.in_office }}</div>
-      <div class="stat-label">In Office</div>
+      <div class="stat-number text-success">{{ stats.present }}</div>
+      <div class="stat-label">Present Today</div>
     </div>
     <div class="stat-card">
-      <div class="stat-number" style="background: linear-gradient(135deg, #f59e0b, #d97706); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.present }}</div>
-      <div class="stat-label">Clocked In</div>
+      <div class="stat-number text-warning">{{ stats.on_leave }}</div>
+      <div class="stat-label">On Leave ({{ stats.pl_today }} PL / {{ stats.ul_today }} UL / {{ stats.lwp_today }} LWP)</div>
     </div>
     <div class="stat-card">
-      <div class="stat-number" style="background: linear-gradient(135deg, #06b6d4, #0891b2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.on_leave }}</div>
-      <div class="stat-label">On Leave</div>
+      <div class="stat-number" style="color: var(--accent-gold);">{{ stats.pending_leaves }}</div>
+      <div class="stat-label">Pending Requests</div>
     </div>
     <div class="stat-card">
-      <div class="stat-number" style="background: linear-gradient(135deg, #ef4444, #dc2626); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">{{ stats.absent }}</div>
-      <div class="stat-label">Absent</div>
+      <div class="stat-number text-danger">{{ stats.absent }}</div>
+      <div class="stat-label">Absent Today</div>
     </div>
     <div class="stat-card">
-      <div class="stat-number">{{ stats.not_arrived }}</div>
+      <div class="stat-number text-muted">{{ stats.not_arrived }}</div>
       <div class="stat-label">Not Arrived</div>
     </div>
   </div>
 
-  <!-- Alerts -->
+  <!-- Flash Messages -->
   {% with messages = get_flashed_messages() %}
     {% if messages %}
       {% for msg in messages %}
-        <div class="flash-alert alert alert-success" role="alert">{{ msg }}</div>
+        <div class="flash-alert alert alert-info mb-3" role="alert">{{ msg }}</div>
       {% endfor %}
     {% endif %}
   {% endwith %}
 
-  <!-- Main Content -->
+  <!-- Main Grid -->
   <div class="row g-3">
-    <!-- Sidebar -->
-    <div class="col-lg-3 col-md-4">
-      <div class="portal-tabs">
-        <button class="portal-tab active" data-target="staff-tab">👥 Staff</button>
-        <button class="portal-tab" data-target="notice-tab">📢 Notice</button>
-        <button class="portal-tab" data-target="settings-tab">⚙️ Settings</button>
-        <button class="portal-tab" onclick="window.location='/admin/system'">🖥️ System</button>
+    <!-- Left Sidebar / Navigation Controls -->
+    <div class="col-lg-4 col-md-5">
+      <div class="portal-tabs mb-3">
+        <button class="portal-tab active" data-target="leaves-pane">
+          🌴 Leaves {% if pending_leaves %}<span class="badge bg-warning text-dark">{{ pending_leaves|length }}</span>{% endif %}
+        </button>
+        <button class="portal-tab" data-target="warnings-pane">⚠️ Warnings</button>
+        <button class="portal-tab" data-target="staff-pane">👥 Staff</button>
+        <button class="portal-tab" data-target="reports-pane">📊 Reports</button>
       </div>
 
-      <!-- STAFF TAB -->
-      <div id="staff-tab" class="portal-pane">
-        <!-- Export -->
+      <!-- PANE 1: LEAVE APPROVALS -->
+      <div id="leaves-pane" class="portal-pane">
         <div class="elevated-card p-3 mb-3">
-          <h6 class="page-subtitle mb-3">📊 Export Reports</h6>
-          <form action="/export/weekly" method="GET" class="mb-2">
-            <label class="section-label">Weekly Report</label>
-            <select name="target_user" class="form-select form-select-sm mb-2">
-              <option value="All">All Employees</option>
-              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+          <h6 class="page-subtitle mb-2">⏳ Pending Leave Requests</h6>
+          {% if pending_leaves %}
+            {% for req in pending_leaves %}
+            <div class="card p-2 mb-2" style="background: var(--glass-bg); border: 1px solid var(--glass-border);">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <strong>{{ req.username }}</strong>
+                <span class="leave-type-badge badge-{{ req.leave_type | lower }}">{{ req.leave_type }} ({{ req.days }}d)</span>
+              </div>
+              <div class="small text-muted mb-1">{{ req.start_date }} → {{ req.end_date }}</div>
+              <div class="small mb-2" style="font-style: italic;">"{{ req.reason or 'No reason provided' }}"</div>
+              
+              <div class="d-flex gap-2">
+                <!-- Approve Form -->
+                <form action="/admin_action" method="POST" class="flex-grow-1">
+                  <input type="hidden" name="action_type" value="approve_leave">
+                  <input type="hidden" name="leave_id" value="{{ req.id }}">
+                  <input type="hidden" name="admin_remark" value="Approved by Admin">
+                  <button type="submit" class="btn btn-success btn-sm w-100 py-1">Approve</button>
+                </form>
+                <!-- Reject Form -->
+                <form action="/admin_action" method="POST" class="flex-grow-1">
+                  <input type="hidden" name="action_type" value="reject_leave">
+                  <input type="hidden" name="leave_id" value="{{ req.id }}">
+                  <input type="hidden" name="admin_remark" value="Declined per operational requirement">
+                  <button type="submit" class="btn btn-outline-danger btn-sm w-100 py-1">Reject</button>
+                </form>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <p class="text-muted small mb-0 py-2">No pending leave applications.</p>
+          {% endif %}
+        </div>
+
+        {% if recent_leaves %}
+        <div class="elevated-card p-3">
+          <h6 class="page-subtitle mb-2">Recent Decision History</h6>
+          <div style="max-height: 220px; overflow-y: auto;">
+            {% for r in recent_leaves %}
+            <div class="d-flex justify-content-between align-items-center py-1 border-bottom border-secondary small">
+              <div>
+                <strong>{{ r.username }}</strong> ({{ r.leave_type }})
+                <div class="text-muted" style="font-size: 0.75rem;">{{ r.start_date }} ({{ r.days }}d)</div>
+              </div>
+              <div>
+                {% if r.status == 'Approved' %}
+                  <span class="badge bg-success">Approved</span>
+                {% else %}
+                  <span class="badge bg-danger">Rejected</span>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- PANE 2: WARNINGS & NOTICES -->
+      <div id="warnings-pane" class="portal-pane" style="display: none;">
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-3">⚠️ Issue Warning or Notice</h6>
+          <form action="/admin_action" method="POST">
+            <input type="hidden" name="action_type" value="issue_warning">
+            
+            <label class="section-label">Recipient</label>
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              <option value="All">📢 All Employees (Broadcast)</option>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }} ({{ u.department }})</option>{% endfor %}
             </select>
-            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">⬇ Weekly</button>
-          </form>
-          <form action="/export/monthly" method="GET">
-            <label class="section-label">Monthly Report</label>
-            <select name="target_user" class="form-select form-select-sm mb-2">
-              <option value="All">All Employees</option>
-              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+
+            <label class="section-label">Type</label>
+            <select name="warn_type" class="form-select form-select-sm mb-2">
+              <option value="warning">⚠️ Official Warning (Late / Attendance)</option>
+              <option value="urgent">🚨 Urgent Notice</option>
+              <option value="notice">📢 General Notice / Circular</option>
             </select>
-            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">⬇ Monthly</button>
+
+            <label class="section-label">Title</label>
+            <input type="text" name="warn_title" class="form-control form-control-sm mb-2" placeholder="e.g. Warning: Repeated Late Arrival" required maxlength="100">
+
+            <label class="section-label">Message</label>
+            <textarea name="warn_message" class="form-control form-control-sm mb-3" rows="3" placeholder="Provide details of the notice or warning..." required maxlength="500"></textarea>
+
+            <button type="submit" class="btn btn-warning w-100 btn-sm">Issue Notification</button>
           </form>
         </div>
 
+        <div class="elevated-card p-3">
+          <h6 class="page-subtitle mb-2">Active Issued Notices</h6>
+          <div style="max-height: 250px; overflow-y: auto;">
+            {% for w in warnings %}
+            <div class="{{ 'warning-entry' if w.type in ('warning', 'urgent') else 'notice-entry' }}">
+              <div class="d-flex justify-content-between align-items-center">
+                <strong style="font-size: 0.85rem;">{{ w.title }}</strong>
+                <form action="/admin_action" method="POST" style="display:inline;">
+                  <input type="hidden" name="action_type" value="delete_warning">
+                  <input type="hidden" name="warn_id" value="{{ w.id }}">
+                  <button type="submit" class="btn btn-link p-0 text-danger" style="font-size: 0.75rem;" title="Delete">🗑</button>
+                </form>
+              </div>
+              <div style="font-size: 0.8rem; margin: 0.25rem 0;">{{ w.message }}</div>
+              <div class="text-muted" style="font-size: 0.7rem;">To: {{ w.username or 'All Staff' }} • {{ w.created_at[:16] }}</div>
+            </div>
+            {% else %}
+            <p class="text-muted small mb-0">No active warnings or notices.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- PANE 3: STAFF CONTROLS -->
+      <div id="staff-pane" class="portal-pane" style="display: none;">
         <!-- Add Employee -->
         <div class="elevated-card p-3 mb-3">
           <h6 class="page-subtitle mb-3">➕ Add Employee</h6>
-          <form action="/admin_action" method="POST" novalidate>
+          <form action="/admin_action" method="POST">
             <input type="hidden" name="action_type" value="add_user">
-            <input type="text" name="new_username" class="form-control mb-2" placeholder="Username" required>
-            <input type="password" name="new_password" class="form-control mb-2" placeholder="Password" required minlength="6">
-            <select name="department" class="form-select mb-2" required>
+            <input type="text" name="new_username" class="form-control form-control-sm mb-2" placeholder="Username" required>
+            <input type="password" name="new_password" class="form-control form-control-sm mb-2" placeholder="Password (min 6)" required minlength="6">
+            <select name="department" class="form-select form-select-sm mb-2" required>
               {% for d in departments %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
             </select>
-            <select name="weekoff" class="form-select mb-3" required>
-              {% for d in weekday_options %}<option value="{{ d }}">{{ d }} Off</option>{% endfor %}
+            <div class="row g-2 mb-3">
+              <div class="col-6">
+                <select name="weekoff" class="form-select form-select-sm" required>
+                  {% for d in weekday_options %}<option value="{{ d }}">{{ d }} Off</option>{% endfor %}
+                </select>
+              </div>
+              <div class="col-6">
+                <input type="number" name="pl_quota" class="form-control form-control-sm" placeholder="PL Quota" value="18" min="0" max="60">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Create Staff</button>
+          </form>
+        </div>
+
+        <!-- Mark Attendance Status Directly -->
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-2">📝 Mark Status Directly</h6>
+          <form action="/admin_action" method="POST">
+            <input type="hidden" name="action_type" value="mark_leave">
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
             </select>
-            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Create</button>
+            <select name="status" class="form-select form-select-sm mb-2" required>
+              <option value="Present">Present</option>
+              <option value="PL">🟢 PL — Paid Leave</option>
+              <option value="UL">🟡 UL — Unpaid Leave</option>
+              <option value="LWP">🔴 LWP — Leave Without Pay</option>
+              <option value="Half-Day">Half-Day</option>
+              <option value="Absent">Absent</option>
+            </select>
+            <button type="submit" class="btn btn-warning w-100 btn-sm">Update Today's Status</button>
+          </form>
+        </div>
+
+        <!-- Update PL Quota -->
+        <div class="elevated-card p-3 mb-3">
+          <h6 class="page-subtitle mb-2">🌴 Set PL Annual Quota</h6>
+          <form action="/admin_action" method="POST">
+            <input type="hidden" name="action_type" value="update_pl_quota">
+            <select name="target_user" class="form-select form-select-sm mb-2" required>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }} (Current: {{ u.pl_quota or 18 }} PL)</option>{% endfor %}
+            </select>
+            <input type="number" name="pl_quota" class="form-control form-control-sm mb-2" placeholder="New annual PL days" value="18" min="0" max="100" required>
+            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">Save Quota</button>
           </form>
         </div>
 
         <!-- Account Controls -->
         <div class="elevated-card p-3">
-          <h6 class="page-subtitle mb-3">🔧 Controls</h6>
-
-          <!-- Reset Password -->
-          <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
-            <input type="hidden" name="action_type" value="reset_password">
-            <label class="section-label">Reset Password</label>
-            <select name="target_user" class="form-select form-select-sm mb-2" required>
-              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
-            </select>
-            <input type="password" name="new_password" class="form-control form-control-sm mb-2" placeholder="New password" required minlength="6">
-            <button type="submit" class="btn btn-warning w-100 btn-sm">Reset</button>
-          </form>
-
-          <!-- Schedule -->
-          <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
+          <h6 class="page-subtitle mb-2">⚙️ Password & Schedule</h6>
+          
+          <!-- Shift/Schedule -->
+          <form action="/admin_action" method="POST" class="mb-3 pb-2 border-bottom border-secondary">
             <input type="hidden" name="action_type" value="change_shift">
-            <label class="section-label">Update Schedule</label>
+            <label class="section-label">Shift & Week-off</label>
             <select name="target_user" class="form-select form-select-sm mb-2" required>
               {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
             </select>
@@ -147,133 +276,129 @@
             <select name="new_weekoff" class="form-select form-select-sm mb-2" required>
               {% for d in weekday_options %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
             </select>
-            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Update</button>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Update Schedule</button>
           </form>
 
-          <!-- Mark Leave -->
-          <form action="/admin_action" method="POST" class="mb-2 pb-2 border-bottom border-secondary">
-            <input type="hidden" name="action_type" value="mark_leave">
-            <label class="section-label">Mark Status</label>
+          <!-- Reset Password -->
+          <form action="/admin_action" method="POST" class="mb-3 pb-2 border-bottom border-secondary">
+            <input type="hidden" name="action_type" value="reset_password">
+            <label class="section-label">Reset Password</label>
             <select name="target_user" class="form-select form-select-sm mb-2" required>
               {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
             </select>
-            <select name="status" class="form-select form-select-sm mb-2" required>
-              <option value="Leave">On Leave</option>
-              <option value="Absent">Absent</option>
-            </select>
-            <button type="submit" class="btn btn-warning w-100 btn-sm">Apply</button>
+            <input type="password" name="new_password" class="form-control form-control-sm mb-2" placeholder="New password (6+ chars)" required minlength="6">
+            <button type="submit" class="btn btn-warning w-100 btn-sm">Reset Password</button>
           </form>
 
           <!-- Delete User -->
           <form action="/admin_action" method="POST" data-confirm="⚠️ Delete employee and ALL records permanently?">
             <input type="hidden" name="action_type" value="delete_user">
-            <label class="section-label">Delete Employee</label>
+            <label class="section-label">Delete Staff</label>
             <select name="target_user" class="form-select form-select-sm mb-2" required>
               {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
             </select>
-            <button type="submit" class="btn btn-danger-glow w-100 btn-sm">🗑 Delete</button>
+            <button type="submit" class="btn btn-danger-glow w-100 btn-sm">🗑 Delete Employee</button>
           </form>
         </div>
       </div>
 
-      <!-- NOTICE TAB -->
-      <div id="notice-tab" class="portal-pane" style="display: none;">
+      <!-- PANE 4: REPORTS & COMPANY -->
+      <div id="reports-pane" class="portal-pane" style="display: none;">
         <div class="elevated-card p-3 mb-3">
-          <h6 class="page-subtitle mb-3">📢 Post Announcement</h6>
-          <form action="/admin_action" method="POST" novalidate>
-            <input type="hidden" name="action_type" value="post_announcement">
-            <input type="text" name="ann_title" class="form-control mb-2" placeholder="Title" required maxlength="100">
-            <textarea name="ann_body" class="form-control mb-2" placeholder="Message..." required maxlength="500" rows="3"></textarea>
-            <select name="ann_priority" class="form-select mb-3">
-              <option value="normal">🔵 Normal</option>
-              <option value="high">🟠 High</option>
-              <option value="urgent">🔴 Urgent</option>
+          <h6 class="page-subtitle mb-3">📊 Excel Reports</h6>
+          <form action="/export/weekly" method="GET" class="mb-2">
+            <label class="section-label">Weekly Attendance (with PL/UL/LWP)</label>
+            <select name="target_user" class="form-select form-select-sm mb-2">
+              <option value="All">All Staff</option>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
             </select>
-            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Post</button>
+            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">⬇ Export Weekly Excel</button>
+          </form>
+
+          <form action="/export/monthly" method="GET">
+            <label class="section-label">Monthly Attendance</label>
+            <select name="target_user" class="form-select form-select-sm mb-2">
+              <option value="All">All Staff</option>
+              {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary-glow w-100 btn-sm">⬇ Export Monthly Excel</button>
           </form>
         </div>
 
         <div class="elevated-card p-3">
-          <h6 class="page-subtitle mb-2">Active Announcements</h6>
-          {% if announcements %}
-            {% for ann in announcements %}
-            <div class="announcement-banner {{ ann.priority }} mb-2">
-              <div class="announcement-title">{{ ann.title }}</div>
-              <div class="announcement-body">{{ ann.body }}</div>
-              <div class="announcement-meta">{{ ann.created_by }} • {{ ann.created_at[:10] }}</div>
-              {% if ann.active %}
-              <form action="/admin_action" method="POST" style="margin-top: 0.5rem;">
-                <input type="hidden" name="action_type" value="delete_announcement">
-                <input type="hidden" name="ann_id" value="{{ ann.id }}">
-                <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
-              </form>
-              {% endif %}
-            </div>
-            {% endfor %}
-          {% else %}
-            <p class="text-muted small">No announcements.</p>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- SETTINGS TAB -->
-      <div id="settings-tab" class="portal-pane" style="display: none;">
-        <div class="elevated-card p-3 mb-3">
-          <h6 class="page-subtitle mb-3">🏢 Company Name</h6>
+          <h6 class="page-subtitle mb-2">🏢 Organization</h6>
           <form action="/admin_action" method="POST">
             <input type="hidden" name="action_type" value="update_company">
-            <input type="text" name="company_name" class="form-control mb-3" value="{{ company_name }}" required>
-            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Save</button>
+            <input type="text" name="company_name" class="form-control form-control-sm mb-2" value="{{ company_name }}" required>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Update Name</button>
           </form>
         </div>
-        <div class="elevated-card p-3">
-          <h6 class="page-subtitle mb-2">🔗 Tools</h6>
-          <a href="/api/status" target="_blank" class="btn btn-secondary-glow w-100 btn-sm mb-2">API Status</a>
-          <a href="/admin/analytics" class="btn btn-secondary-glow w-100 btn-sm">Analytics</a>
-        </div>
       </div>
+
     </div>
 
-    <!-- Roster Table -->
-    <div class="col-lg-9 col-md-8">
+    <!-- Right Side: Today's Attendance & Leave Ledger -->
+    <div class="col-lg-8 col-md-7">
       <div class="elevated-card p-4">
-        <h5 class="page-subtitle mb-1">🟢 Live Presence Monitor</h5>
-        <p style="color: var(--text-muted); margin: 0; font-size: 0.85rem;">Real-time attendance status</p>
-        <div class="table-responsive mt-3">
-          <table class="table-premium">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h5 class="page-subtitle mb-0">📋 Today's Staff Attendance Ledger</h5>
+            <p class="text-muted small mb-0">Record of shift timings, hours worked, and leave statuses</p>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table-premium table-sm">
             <thead>
-              <tr><th>Name</th><th>Dept</th><th class="d-none d-lg-table-cell">Shift</th><th>Status</th><th>In</th><th>Out</th></tr>
+              <tr>
+                <th>Employee</th>
+                <th class="d-none d-md-table-cell">Dept</th>
+                <th class="d-none d-lg-table-cell">Shift</th>
+                <th>Clock In</th>
+                <th>Clock Out</th>
+                <th>Hours</th>
+                <th>Status</th>
+              </tr>
             </thead>
             <tbody>
-              {% for row in roster %}
+              {% for row in attendance_records %}
               <tr>
-                <td class="fw-bold">{{ row.username }}</td>
-                <td><span class="badge bg-secondary">{{ row.department }}</span></td>
-                <td class="d-none d-lg-table-cell" style="font-size: 0.85rem;">{{ row.shift }}</td>
+                <td class="fw-bold" style="font-size: 0.9rem;">{{ row.username }}</td>
+                <td class="d-none d-md-table-cell"><span class="badge bg-secondary" style="font-size: 0.75rem;">{{ row.department }}</span></td>
+                <td class="d-none d-lg-table-cell" style="font-size: 0.8rem;">{{ row.shift }}</td>
+                <td class="text-success fw-bold" style="font-size: 0.85rem;">{{ row.clock_in or '—' }}</td>
+                <td class="text-warning fw-bold" style="font-size: 0.85rem;">{{ row.clock_out or '—' }}</td>
+                <td class="text-primary fw-bold" style="font-size: 0.85rem;">{{ row.total_hours or '—' }}</td>
                 <td>
-                  {% if row.status == 'Leave' %}<span class="badge badge-status status-away">Leave</span>
-                  {% elif row.status == 'Absent' %}<span class="badge badge-status status-absent">Absent</span>
-                  {% elif row.weekoff == today_day and not row.clock_in %}<span class="badge bg-secondary">Week Off</span>
-                  {% elif row.clock_in and row.clock_out %}<span class="badge bg-secondary">Shift Ended</span>
-                  {% elif row.clock_in and not row.clock_out %}<span class="badge badge-status status-online">In Office</span>
-                  {% else %}<span class="badge bg-secondary opacity-50">Not Arrived</span>
+                  {% if row.status in ('PL', 'UL', 'LWP') %}
+                    <span class="leave-type-badge badge-{{ row.status | lower }}">{{ row.status }}</span>
+                  {% elif row.status == 'Leave' %}
+                    <span class="leave-type-badge badge-pl">PL</span>
+                  {% elif row.status == 'Absent' %}
+                    <span class="badge badge-status status-absent">Absent</span>
+                  {% elif row.weekoff == today_day and not row.clock_in %}
+                    <span class="badge bg-secondary">Week Off</span>
+                  {% elif row.clock_in and row.clock_out %}
+                    <span class="badge bg-secondary">Completed</span>
+                  {% elif row.clock_in and not row.clock_out %}
+                    <span class="badge badge-status status-online">Present</span>
+                  {% else %}
+                    <span class="badge bg-secondary opacity-50">Not Arrived</span>
                   {% endif %}
                 </td>
-                <td class="text-success fw-bold">{{ row.clock_in or '—' }}</td>
-                <td class="text-warning fw-bold">{{ row.clock_out or '—' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="6" class="text-center text-muted py-4">No staff found.</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-4">No employee records found.</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+
       </div>
     </div>
   </div>
 
 </div>
-
 {% endblock %}
 
 {% block scripts %}
