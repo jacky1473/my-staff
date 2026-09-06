@@ -35,7 +35,7 @@ pipeline {
                 sh 'sleep 10' 
                 
                 // Run the headless Firefox automation script
-                sh 'python3 test_login.py'
+                sh 'APP_URL="http://127.0.0.1:5000" python3 test_login.py'
             }
         }
     }

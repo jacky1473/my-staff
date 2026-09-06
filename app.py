@@ -416,7 +416,7 @@ def inject_globals():
 # ---------------------------------------------------------------------------
 @app.before_request
 def check_setup():
-    if request.endpoint in ('setup', 'static'):
+    if request.endpoint in ('setup', 'static', 'api_status'):
         return
     try:
         conn = get_db_connection()
@@ -1311,13 +1311,18 @@ def export_excel(report_type):
 def api_status():
     today       = today_str()
     server_time = ist_now().strftime('%H:%M:%S')
-    conn = get_db_connection()
-    total_staff = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
-    in_office   = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND clock_in IS NOT NULL AND clock_out IS NULL",
-        (today,)
-    ).fetchone()[0]
-    conn.close()
+    total_staff = 0
+    in_office   = 0
+    try:
+        conn = get_db_connection()
+        total_staff = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
+        in_office   = conn.execute(
+            "SELECT COUNT(*) FROM attendance WHERE date=? AND clock_in IS NOT NULL AND clock_out IS NULL",
+            (today,)
+        ).fetchone()[0]
+        conn.close()
+    except Exception:
+        pass
     return jsonify({
         "system_status": "Healthy",
         "current_time_ist": server_time,

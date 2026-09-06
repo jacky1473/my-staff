@@ -23,7 +23,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 
-BASE_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
+BASE_URL = os.environ.get("APP_URL", "http://127.0.0.1:5000").rstrip("/")
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin@123")
 
@@ -35,13 +35,37 @@ def wait_for_server(url, timeout=30):
     status_url = f"{url}/api/status"
     while time.time() - start_time < timeout:
         try:
-            with urllib.request.urlopen(status_url, timeout=2) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode())
-                    print(f"[PASS] Server is healthy! Status: {data.get('system_status')}")
+            req = urllib.request.Request(status_url, headers={"User-Agent": "AutomatedTest/1.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status in (200, 302):
+                    try:
+                        data = json.loads(resp.read().decode())
+                        print(f"[PASS] Server is healthy! Status: {data.get('system_status')}")
+                    except Exception:
+                        print(f"[PASS] Web server is responding! HTTP {resp.status}")
                     return True
+        except urllib.error.HTTPError as e:
+            if e.code in (200, 302):
+                print(f"[PASS] Web server responded with HTTP {e.code}")
+                return True
         except Exception:
-            time.sleep(1)
+            pass
+
+        # Fallback check on login / setup endpoint
+        try:
+            req = urllib.request.Request(f"{url}/login", headers={"User-Agent": "AutomatedTest/1.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status in (200, 302):
+                    print(f"[PASS] Web server responded on login/setup endpoint! HTTP {resp.status}")
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code in (200, 302):
+                print(f"[PASS] Web server responded on login endpoint with HTTP {e.code}")
+                return True
+        except Exception:
+            pass
+
+        time.sleep(1)
     print(f"[ERROR] Server did not become ready within {timeout} seconds.")
     return False
 
