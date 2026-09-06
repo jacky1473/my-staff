@@ -553,7 +553,7 @@ def forgot():
                 conn.commit()
                 conn.close()
                 _clear_attempts(username)
-                log_audit('PASSWORD_RESET', username=user['id'])
+                log_audit('PASSWORD_RESET', f"Username: {username}", user['id'])
                 flash("✅ Password reset successfully. You may now log in.")
                 return redirect(url_for('login'))
             else:
