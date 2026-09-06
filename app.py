@@ -17,7 +17,7 @@ import json
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please')
 
-DB_PATH = '/data/attendance.db' if os.path.exists('/data') else 'attendance.db'
+DB_PATH = os.environ.get('DB_PATH') or ('/data/attendance.db' if os.path.exists('/data') else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'attendance.db'))
 BACKUP_DIR = os.environ.get('BACKUP_DIR', './backups')
 
 # Ensure backup directory exists
@@ -52,11 +52,12 @@ logger = logging.getLogger(__name__)
 # Database
 # ---------------------------------------------------------------------------
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode=WAL")   # Better concurrent access
     conn.execute("PRAGMA synchronous=NORMAL") # Faster writes, still safe
+    conn.execute("PRAGMA cache_size = -64000")
     return conn
 
 
@@ -133,10 +134,39 @@ def init_db():
         title      TEXT    NOT NULL,
         message    TEXT    NOT NULL,
         created_at TEXT    NOT NULL,
-        created_by TEXT    NOT NULL,
+        created_by TEXT    NOT NULL DEFAULT 'Admin',
         is_read    INTEGER DEFAULT 0,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     )''')
+
+    # Ensure notifications table has created_by column and user_id is nullable (for broadcast notices)
+    try:
+        cols_info = conn.execute("PRAGMA table_info(notifications)").fetchall()
+        cols = [r[1] for r in cols_info]
+        user_id_col = next((c for c in cols_info if c[1] == 'user_id'), None)
+        user_id_is_not_null = (user_id_col and user_id_col[3] == 1)
+
+        if 'created_by' not in cols or user_id_is_not_null:
+            conn.execute('''CREATE TABLE IF NOT EXISTS notifications_v2 (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER,
+                type       TEXT    DEFAULT 'notice',
+                title      TEXT    NOT NULL,
+                message    TEXT    NOT NULL,
+                created_at TEXT    NOT NULL,
+                created_by TEXT    NOT NULL DEFAULT 'Admin',
+                is_read    INTEGER DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )''')
+            cby_sql = "created_by" if 'created_by' in cols else "'Admin'"
+            type_sql = "type" if 'type' in cols else "'notice'"
+            conn.execute(f'''INSERT INTO notifications_v2 (id, user_id, type, title, message, created_at, created_by, is_read)
+                            SELECT id, user_id, {type_sql}, title, message, created_at, {cby_sql}, COALESCE(is_read, 0)
+                            FROM notifications''')
+            conn.execute("DROP TABLE notifications")
+            conn.execute("ALTER TABLE notifications_v2 RENAME TO notifications")
+    except Exception as e:
+        logger.error(f"Error migrating notifications table: {e}")
 
     _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'Present'")
     _safe_alter(conn, "ALTER TABLE attendance ADD COLUMN total_hours TEXT")
@@ -145,6 +175,9 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN pl_quota INTEGER DEFAULT 18")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
+    _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_by TEXT")
+    _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_at TEXT")
+    _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN admin_remark TEXT")
 
     conn.commit()
     conn.close()
@@ -155,6 +188,10 @@ def _safe_alter(conn, sql):
         conn.execute(sql)
     except Exception:
         pass
+
+
+# Initialize database & run migrations on load (works with both python app.py and gunicorn)
+init_db()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -216,19 +253,17 @@ def get_user_leave_summary(user_id):
     user = conn.execute("SELECT pl_quota FROM users WHERE id = ?", (user_id,)).fetchone()
     pl_quota = user['pl_quota'] if user and user['pl_quota'] is not None else 18
 
-    pl_used = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'PL'", (user_id,)
-    ).fetchone()[0]
-    ul_used = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'UL'", (user_id,)
-    ).fetchone()[0]
-    lwp_used = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'LWP'", (user_id,)
-    ).fetchone()[0]
-    legacy_leave = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE user_id = ? AND status = 'Leave'", (user_id,)
-    ).fetchone()[0]
-    pl_used += legacy_leave
+    row = conn.execute('''
+        SELECT 
+            SUM(CASE WHEN status IN ('PL', 'Leave') THEN 1 ELSE 0 END) AS pl_used,
+            SUM(CASE WHEN status = 'UL' THEN 1 ELSE 0 END) AS ul_used,
+            SUM(CASE WHEN status = 'LWP' THEN 1 ELSE 0 END) AS lwp_used
+        FROM attendance WHERE user_id = ?
+    ''', (user_id,)).fetchone()
+
+    pl_used = row['pl_used'] or 0
+    ul_used = row['ul_used'] or 0
+    lwp_used = row['lwp_used'] or 0
     conn.close()
 
     return {
@@ -290,18 +325,21 @@ def generate_pin():
     return ''.join(random.choices(string.digits, k=4))
 
 
-def log_audit(action, details=None, user_id=None):
-    """Log admin actions — uses own connection with timeout to avoid locking"""
+def log_audit(action, details=None, user_id=None, conn=None):
+    """Log admin actions — uses provided connection or creates one safely"""
     try:
         ip_addr = request.remote_addr if request else 'system'
-        conn = sqlite3.connect(DB_PATH, timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL")  # Allows concurrent reads
+        close_needed = False
+        if conn is None:
+            conn = get_db_connection()
+            close_needed = True
         conn.execute(
             "INSERT INTO audit_logs (user_id, action, details, ip_addr, timestamp) VALUES (?,?,?,?,?)",
             (user_id, action, details, ip_addr, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
         )
-        conn.commit()
-        conn.close()
+        if close_needed:
+            conn.commit()
+            conn.close()
     except Exception as e:
         logger.error(f"Audit log error: {e}")
 
@@ -1042,7 +1080,7 @@ def admin_action():
                         (new_user, generate_password_hash(new_pass), dept, 'Staff',
                          '09:00 AM - 06:00 PM', weekoff, pl_val, 'Set by admin', 'yes')
                     )
-                    log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'])
+                    log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'], conn=conn)
                     flash(f"✅ Employee '{new_user}' created with {pl_val} PL quota.")
                 except sqlite3.IntegrityError:
                     flash(f"Username '{new_user}' already exists.")
@@ -1052,7 +1090,7 @@ def admin_action():
             user = conn.execute("SELECT id FROM users WHERE username=? AND role!='Admin'", (target,)).fetchone()
             if user:
                 conn.execute("DELETE FROM users WHERE id = ?", (user['id'],))
-                log_audit('USER_DELETED', target, session['user_id'])
+                log_audit('USER_DELETED', target, session['user_id'], conn=conn)
                 flash(f"✅ Employee '{target}' removed.")
             else:
                 flash("User not found.")
@@ -1067,7 +1105,7 @@ def admin_action():
                     "UPDATE users SET password=? WHERE username=?",
                     (generate_password_hash(new_pass), target)
                 )
-                log_audit('PASSWORD_RESET_ADMIN', target, session['user_id'])
+                log_audit('PASSWORD_RESET_ADMIN', target, session['user_id'], conn=conn)
                 flash(f"✅ Password reset for '{target}'.")
 
         elif action_type == 'change_shift':
@@ -1081,7 +1119,7 @@ def admin_action():
                     "UPDATE users SET shift=?, weekoff=? WHERE username=?",
                     (new_shift, new_weekoff, target)
                 )
-                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}", session['user_id'])
+                log_audit('SHIFT_UPDATED', f"{target}: {new_shift}", session['user_id'], conn=conn)
                 flash(f"✅ Schedule updated for '{target}'.")
 
         elif action_type == 'update_pl_quota':
@@ -1089,7 +1127,7 @@ def admin_action():
             pl_quota = request.form.get('pl_quota', '').strip()
             if pl_quota.isdigit():
                 conn.execute("UPDATE users SET pl_quota=? WHERE username=?", (int(pl_quota), target))
-                log_audit('PL_QUOTA_UPDATED', f"{target}: {pl_quota}", session['user_id'])
+                log_audit('PL_QUOTA_UPDATED', f"{target}: {pl_quota}", session['user_id'], conn=conn)
                 flash(f"✅ Annual PL Quota for '{target}' set to {pl_quota} days.")
             else:
                 flash("Invalid quota value.")
@@ -1113,7 +1151,7 @@ def admin_action():
                             'INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)',
                             (user['id'], today, status)
                         )
-                    log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'])
+                    log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'], conn=conn)
                     flash(f"✅ '{target}' marked as {status}.")
                 else:
                     flash("User not found.")
@@ -1151,7 +1189,7 @@ def admin_action():
                      f"Your {leave['leave_type']} request from {leave['start_date']} to {leave['end_date']} has been approved. {admin_remark}",
                      now_str, session['username'])
                 )
-                log_audit('LEAVE_APPROVED', f"Leave #{leave_id} ({leave['leave_type']})", session['user_id'])
+                log_audit('LEAVE_APPROVED', f"Leave #{leave_id} ({leave['leave_type']})", session['user_id'], conn=conn)
                 flash(f"✅ Leave #{leave_id} approved as {leave['leave_type']}.")
             else:
                 flash("Leave record not found or already reviewed.")
@@ -1172,7 +1210,7 @@ def admin_action():
                      f"Your {leave['leave_type']} request ({leave['start_date']} to {leave['end_date']}) was rejected. Reason: {admin_remark or 'No remark'}",
                      now_str, session['username'])
                 )
-                log_audit('LEAVE_REJECTED', f"Leave #{leave_id}", session['user_id'])
+                log_audit('LEAVE_REJECTED', f"Leave #{leave_id}", session['user_id'], conn=conn)
                 flash(f"Leave #{leave_id} rejected.")
             else:
                 flash("Leave record not found or already reviewed.")
@@ -1199,14 +1237,14 @@ def admin_action():
                         "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
                         (target_id, warn_type, warn_title, warn_msg, now_str, session['username'])
                     )
-                    log_audit('WARNING_ISSUED', f"To {target}: {warn_title}", session['user_id'])
+                    log_audit('WARNING_ISSUED', f"To {target}: {warn_title}", session['user_id'], conn=conn)
                     flash(f"✅ Warning/Notice issued to {target}.")
 
         elif action_type == 'delete_warning':
             warn_id = request.form.get('warn_id', '')
             if warn_id.isdigit():
                 conn.execute("DELETE FROM notifications WHERE id=?", (int(warn_id),))
-                log_audit('WARNING_DELETED', f"ID: {warn_id}", session['user_id'])
+                log_audit('WARNING_DELETED', f"ID: {warn_id}", session['user_id'], conn=conn)
                 flash("✅ Notice/Warning removed.")
             else:
                 flash("Invalid ID.")
@@ -1224,14 +1262,14 @@ def admin_action():
                     "INSERT INTO announcements (title, body, priority, created_at, created_by, active) VALUES (?,?,?,?,?,1)",
                     (title, body, priority, ist_now().strftime('%Y-%m-%d %H:%M:%S'), session['username'])
                 )
-                log_audit('ANNOUNCEMENT_POSTED', title, session['user_id'])
+                log_audit('ANNOUNCEMENT_POSTED', title, session['user_id'], conn=conn)
                 flash(f"✅ Announcement posted.")
 
         elif action_type == 'delete_announcement':
             ann_id = request.form.get('ann_id', '')
             if ann_id.isdigit():
                 conn.execute("DELETE FROM announcements WHERE id=?", (int(ann_id),))
-                log_audit('ANNOUNCEMENT_DELETED', f"ID: {ann_id}", session['user_id'])
+                log_audit('ANNOUNCEMENT_DELETED', f"ID: {ann_id}", session['user_id'], conn=conn)
                 flash("✅ Announcement removed.")
             else:
                 flash("Invalid ID.")
@@ -1242,7 +1280,7 @@ def admin_action():
                 flash("Company name required.")
             else:
                 conn.execute("UPDATE company SET name=? WHERE id=1", (new_name,))
-                log_audit('COMPANY_UPDATED', new_name, session['user_id'])
+                log_audit('COMPANY_UPDATED', new_name, session['user_id'], conn=conn)
                 flash(f"✅ Company name updated.")
 
         conn.commit()

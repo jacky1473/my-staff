@@ -1,51 +1,59 @@
 pipeline {
     agent any
 
+    environment {
+        PATH = "/usr/local/bin:/usr/bin:/bin:$PATH"
+        DB_PATH = "/data/attendance.db"
+        SECRET_KEY = "c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c"
+    }
+
     stages {
         stage('Pull Code') {
             steps {
                 checkout scm
             }
         }
-        
-        stage('Build Docker Image') {
+
+        stage('Install Dependencies') {
             steps {
-                echo 'Building the Python Flask image...'
-                sh 'docker build -t attendance-app:latest .'
+                echo 'Installing Python dependencies...'
+                sh 'pip3 install -r requirements.txt'
             }
         }
 
-        stage('Deploy Application') {
+        stage('Deploy with PM2') {
             steps {
-                echo 'Deploying the new container...'
-                // Stop and remove the old container if it exists
+                echo 'Deploying application using PM2...'
+                // Stop and remove old docker/podman container if exists
                 sh 'docker stop attendance-inst || true'
                 sh 'docker rm attendance-inst || true'
-                sh 'sleep 2'
 
-                // Run the new container with JENKINS_NODE_COOKIE=dontKillMe so Jenkins does NOT kill it after build completes
-                sh 'JENKINS_NODE_COOKIE=dontKillMe docker run -d --name attendance-inst -p 5000:5000 -v attendance_db_vol:/data -e SECRET_KEY="c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c" --restart unless-stopped attendance-app:latest'
+                // Run application with PM2 (JENKINS_NODE_COOKIE=dontKillMe prevents process tree killer)
+                sh '''
+                    export JENKINS_NODE_COOKIE=dontKillMe
+                    pm2 delete attendance-app || true
+                    pm2 start ecosystem.config.js
+                    pm2 save || true
+                '''
             }
         }
 
         stage('Automated UI Testing') {
             steps {
                 echo 'Running Selenium login test...'
-                // Give Gunicorn 10 seconds to fully boot up and bind to the port
-                sh 'sleep 10' 
-                
-                // Run the headless Firefox automation script
+                sh 'sleep 5'
                 sh 'APP_URL="http://127.0.0.1:5000" python3 test_login.py'
             }
         }
     }
-    
+
     post {
         success {
-            echo '✅ Deployment and UI testing completed successfully, Boss!'
+            echo '✅ Deployment with PM2 and UI testing completed successfully, Boss!'
         }
         failure {
             echo '❌ Pipeline failed! Check the logs to see if the build, deploy, or login test crashed.'
         }
     }
 }
+
