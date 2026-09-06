@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+
+{% block title %}Product Tour &amp; Workflow — {{ company_name }}{% endblock %}
+
+{% block head %}
+<style>
+  .workflow-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+  }
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(0, 217, 255, 0.12);
+    border: 1px solid rgba(0, 217, 255, 0.35);
+    color: var(--accent-cyan);
+    padding: 0.35rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 1.25rem;
+  }
+  .hero-title {
+    font-size: clamp(1.8rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.2;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #ffffff 40%, var(--accent-cyan) 80%, var(--accent-lime) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero-desc {
+    color: var(--text-secondary);
+    font-size: clamp(1rem, 2vw, 1.15rem);
+    max-width: 780px;
+    margin: 0 auto 2rem;
+    line-height: 1.6;
+  }
+  .nav-bar-card {
+    background: rgba(15, 30, 46, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 1rem;
+    padding: 1rem 1.5rem;
+    margin-bottom: 2.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  
+  /* Workflow Stage Cards */
+  .stage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 3rem;
+  }
+  .stage-card {
+    background: rgba(26, 35, 50, 0.65);
+    border: 1px solid var(--glass-border);
+    border-radius: 1rem;
+    padding: 1.75rem 1.5rem;
+    position: relative;
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    overflow: hidden;
+  }
+  .stage-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 10px 25px rgba(0, 217, 255, 0.15);
+  }
+  .stage-step-num {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    font-size: 2.75rem;
+    font-weight: 900;
+    color: rgba(255, 255, 255, 0.05);
+    line-height: 1;
+    user-select: none;
+  }
+  .stage-icon {
+    font-size: 2.25rem;
+    margin-bottom: 1rem;
+    display: inline-block;
+  }
+  .stage-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.6rem;
+  }
+  .stage-body {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+  .stage-highlights {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .highlight-item {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  
+  /* Role Comparison Cards */
+  .role-card {
+    background: rgba(15, 30, 46, 0.75);
+    border: 1px solid var(--glass-border);
+    border-radius: 1rem;
+    padding: 2rem;
+    margin-bottom: 2rem;
+  }
+  .role-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--glass-border);
+    padding-bottom: 1rem;
+  }
+  .role-avatar {
+    width: 52px;
+    height: 52px;
+    border-radius: 0.75rem;
+    background: rgba(0, 217, 255, 0.15);
+    border: 1px solid rgba(0, 217, 255, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.75rem;
+  }
+  .flow-step-row {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .flow-bullet {
+    min-width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-lime));
+    color: #000;
+    font-weight: 800;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+  }
+  .flow-text h5 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.25rem;
+  }
+  .flow-text p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.45;
+  }
+  
+  /* Specs Pill Grid */
+  .specs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .spec-box {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--glass-border);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    text-align: center;
+  }
+  .spec-val {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--accent-cyan);
+    margin-bottom: 0.25rem;
+  }
+  .spec-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  
+  @media (max-width: 768px) {
+    .workflow-container { padding: 1rem 0.75rem 3rem; }
+    .role-card { padding: 1.25rem 1rem; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="workflow-container">
+
+  <!-- Top Navigation Bar -->
+  <div class="nav-bar-card">
+    <div class="d-flex align-items-center gap-2">
+      <span style="font-size: 1.5rem;">🏢</span>
+      <div>
+        <div style="font-weight: 800; font-size: 1.1rem; color: #fff;">{{ company_name }}</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">Workforce Management OS</div>
+      </div>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      {% if session.get('user_id') %}
+        {% if session.get('role') == 'Admin' %}
+          <a href="/admin" class="btn btn-primary-glow btn-sm">👨‍💼 Return to Admin Console</a>
+        {% else %}
+          <a href="/staff" class="btn btn-primary-glow btn-sm">👤 Return to Staff Dashboard</a>
+        {% endif %}
+        <a href="/logout" class="btn btn-secondary-glow btn-sm">Logout</a>
+      {% else %}
+        <a href="/login" class="btn btn-primary-glow btn-sm">🔑 Access Portal / Login</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Hero Header -->
+  <div class="text-center mb-5">
+    <div class="hero-badge">
+      <span>⚡</span> Next-Gen Operations Architecture
+    </div>
+    <h1 class="hero-title">How The Workforce OS Operates</h1>
+    <p class="hero-desc">
+      A comprehensive visual guide detailing how attendance tracking, leave governance, disciplinary compliance, and bulk onboarding work together seamlessly.
+    </p>
+  </div>
+
+  <!-- Section 1: 4-Stage Core Workflow -->
+  <div class="mb-4">
+    <h3 style="font-weight: 800; color: #fff; margin-bottom: 0.5rem;">🔄 End-to-End Operational Lifecycle</h3>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+      The 4 core stages that power daily workforce logging, review, and verification.
+    </p>
+
+    <div class="stage-grid">
+      <!-- Stage 1 -->
+      <div class="stage-card">
+        <div class="stage-step-num">01</div>
+        <div class="stage-icon">🔐</div>
+        <h4 class="stage-title">Smart PIN Authentication</h4>
+        <p class="stage-body">
+          Dual-role portal separating Staff and Admin access. Each login generates an instant 4-digit token with brute-force lockout protection.
+        </p>
+        <div class="stage-highlights">
+          <div class="highlight-item"><span>🛡️</span> 3-attempt anti-lockout protection</div>
+          <div class="highlight-item"><span>⚡</span> Instant token display (zero email lag)</div>
+          <div class="highlight-item"><span>👥</span> Department-level permission checks</div>
+        </div>
+      </div>
+
+      <!-- Stage 2 -->
+      <div class="stage-card">
+        <div class="stage-step-num">02</div>
+        <div class="stage-icon">⏱️</div>
+        <h4 class="stage-title">Precision Time Logging</h4>
+        <p class="stage-body">
+          1-touch Clock In / Clock Out. The system automatically computes total daily hours with IST timezone synchronization and shift tracking.
+        </p>
+        <div class="stage-highlights">
+          <div class="highlight-item"><span>⏰</span> Live working timer on dashboard</div>
+          <div class="highlight-item"><span>📅</span> Shift schedules &amp; weekly-off rules</div>
+          <div class="highlight-item"><span>📊</span> Real-time presence roster for HR</div>
+        </div>
+      </div>
+
+      <!-- Stage 3 -->
+      <div class="stage-card">
+        <div class="stage-step-num">03</div>
+        <div class="stage-icon">🌴</div>
+        <h4 class="stage-title">3-Tier Leave Lifecycle</h4>
+        <p class="stage-body">
+          Automated leave balance validation for Paid Leave (PL), Unpaid Leave (UL), and Leave Without Pay (LWP) with 1-click admin review.
+        </p>
+        <div class="stage-highlights">
+          <div class="highlight-item"><span>🟢</span> Paid Leave (PL) quota deduction</div>
+          <div class="highlight-item"><span>🟡</span> Unpaid Leave &amp; LWP tracking</div>
+          <div class="highlight-item"><span>💬</span> Admin approvals with official remarks</div>
+        </div>
+      </div>
+
+      <!-- Stage 4 -->
+      <div class="stage-card">
+        <div class="stage-step-num">04</div>
+        <div class="stage-icon">📜</div>
+        <h4 class="stage-title">Compliance &amp; Governance</h4>
+        <p class="stage-body">
+          Official disciplinary notices, broadcast announcements, immutable audit trails, and 1-click Excel/CSV reporting for payroll.
+        </p>
+        <div class="stage-highlights">
+          <div class="highlight-item"><span>⚠️</span> Direct or broadcast warning notices</div>
+          <div class="highlight-item"><span>🔒</span> Tamper-evident admin audit trail</div>
+          <div class="highlight-item"><span>📥</span> Automated Excel &amp; CSV export</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 2: Role-based Guides -->
+  <div class="row g-4 mb-5">
+    <!-- Staff Guide -->
+    <div class="col-lg-6">
+      <div class="role-card h-100">
+        <div class="role-header">
+          <div class="role-avatar">👤</div>
+          <div>
+            <h4 style="font-weight: 800; color: #fff; margin: 0;">Staff Workflow</h4>
+            <div style="font-size: 0.85rem; color: var(--accent-cyan);">Employee Day-to-Day Journey</div>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">1</div>
+          <div class="flow-text">
+            <h5>Login &amp; View Live Status</h5>
+            <p>Enter your username and password, verify with the 4-digit security PIN to access your personal dashboard.</p>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">2</div>
+          <div class="flow-text">
+            <h5>Clock In Upon Arrival</h5>
+            <p>Click "Clock In" when your shift begins. A live timer tracks your exact working duration in real-time.</p>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">3</div>
+          <div class="flow-text">
+            <h5>Apply For Leaves Seamlessly</h5>
+            <p>View your remaining Paid Leave (PL) balance. Apply for PL, UL, or LWP with date range and reason.</p>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">4</div>
+          <div class="flow-text">
+            <h5>Clock Out &amp; Review History</h5>
+            <p>Click "Clock Out" at shift completion. Check your 14-day attendance log, leave status, and administrative notices.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin Guide -->
+    <div class="col-lg-6">
+      <div class="role-card h-100">
+        <div class="role-header">
+          <div class="role-avatar">👨‍💼</div>
+          <div>
+            <h4 style="font-weight: 800; color: #fff; margin: 0;">Administrator / HR Workflow</h4>
+            <div style="font-size: 0.85rem; color: var(--accent-lime);">Workforce Operations &amp; Governance</div>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">1</div>
+          <div class="flow-text">
+            <h5>Live Presence &amp; Headcount Monitor</h5>
+            <p>Instant view of staff present today, employees on leave, absent members, and pending approval queues.</p>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">2</div>
+          <div class="flow-text">
+            <h5>1-Click Leave Decisioning</h5>
+            <p>Review leave applications instantly. Approve or reject with official remarks, updating employee quota automatically.</p>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">3</div>
+          <div class="flow-text">
+            <h5>Bulk Employee Onboarding</h5>
+            <p>Import dozens or hundreds of employees at once using CSV or Excel files, or quick copy-paste lines.</p>
+          </div>
+        </div>
+
+        <div class="flow-step-row">
+          <div class="flow-bullet">4</div>
+          <div class="flow-text">
+            <h5>Warnings, Audits &amp; Payroll Exports</h5>
+            <p>Issue formal notices/warnings to staff, inspect tamper-proof audit logs, and download weekly/monthly Excel reports.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 3: High-Performance Architecture Specs -->
+  <div class="role-card mb-5">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+      <div>
+        <h4 style="font-weight: 800; color: #fff; margin: 0;">🚀 Enterprise Architecture &amp; Performance</h4>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">Optimized for simultaneous high-concurrency and sub-second responses</p>
+      </div>
+      <span class="badge badge-status status-online">⚡ PM2 Multi-Worker Engine</span>
+    </div>
+
+    <div class="specs-grid">
+      <div class="spec-box">
+        <div class="spec-val">&lt; 35 ms</div>
+        <div class="spec-label">Sub-Second Response</div>
+      </div>
+      <div class="spec-box">
+        <div class="spec-val">SQLite WAL</div>
+        <div class="spec-label">Zero-Lock Concurrency</div>
+      </div>
+      <div class="spec-box">
+        <div class="spec-val">Multi-Worker</div>
+        <div class="spec-label">Dual-Core PM2 Cluster</div>
+      </div>
+      <div class="spec-box">
+        <div class="spec-val">Gzip &amp; Cache</div>
+        <div class="spec-label">80% Bandwidth Reduction</div>
+      </div>
+    </div>
+
+    <div class="row g-3 mt-3">
+      <div class="col-md-4">
+        <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+          <strong class="text-white d-block mb-1">⚡ High Concurrency Engine</strong>
+          Powered by multi-process Gunicorn with persistent SQLite authentication. 5-10 concurrent user logins complete simultaneously without queue delays.
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+          <strong class="text-white d-block mb-1">🔒 Full Security Governance</strong>
+          Encrypted session tokens, PBKDF2/scrypt password hashing, brute-force lockout defense, and automated database backups.
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+          <strong class="text-white d-block mb-1">📱 PWA Mobile Ready</strong>
+          Installable on Android, iOS, Windows, and macOS as a standalone native-feeling progressive web app with offline splash screens.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom CTA -->
+  <div class="text-center p-4" style="background: linear-gradient(135deg, rgba(0,217,255,0.08), rgba(57,255,20,0.05)); border: 1px solid var(--glass-border); border-radius: 1rem;">
+    <h3 style="font-weight: 800; color: #fff; margin-bottom: 0.5rem;">Ready to Manage Your Workforce?</h3>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.25rem;">
+      Experience lightning-fast attendance tracking and automated leave workflows today.
+    </p>
+    {% if session.get('user_id') %}
+      {% if session.get('role') == 'Admin' %}
+        <a href="/admin" class="btn btn-primary-glow">Go to Admin Dashboard →</a>
+      {% else %}
+        <a href="/staff" class="btn btn-primary-glow">Go to Staff Portal →</a>
+      {% endif %}
+    {% else %}
+      <a href="/login" class="btn btn-primary-glow">Sign In to Your Account →</a>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

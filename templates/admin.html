@@ -29,6 +29,7 @@
       <p class="page-subtitle">{{ today_day }} • {{ company_name }}</p>
     </div>
     <div class="d-flex gap-2" style="flex-wrap: wrap; align-items: center;">
+      <a href="/workflow" class="btn btn-secondary-glow btn-sm">📖 Workflow Guide</a>
       <a href="/admin/analytics" class="btn btn-secondary-glow btn-sm">📊 Analytics</a>
       <a href="/admin/system" class="btn btn-secondary-glow btn-sm">🖥️ System</a>
       <button id="theme-toggle" class="theme-toggle"></button>
@@ -223,6 +224,40 @@
               </div>
             </div>
             <button type="submit" class="btn btn-primary-glow w-100 btn-sm">Create Staff</button>
+          </form>
+        </div>
+
+        <!-- Bulk Onboard Employees -->
+        <div class="elevated-card p-3 mb-3" style="border-left: 3px solid var(--accent-cyan);">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="page-subtitle mb-0">👥 Bulk Import Employees</h6>
+            <a href="/admin/users/template" class="badge bg-secondary text-decoration-none" style="font-size: 0.75rem; padding: 0.35rem 0.6rem;">
+              📥 Sample CSV
+            </a>
+          </div>
+          <p class="text-muted small mb-2">Upload a <code>.csv</code> or <code>.xlsx</code> file, or paste lines directly.</p>
+          <form action="/admin/users/bulk-upload" method="POST" enctype="multipart/form-data">
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">Select CSV / Excel File:</label>
+              <input type="file" name="file" class="form-control form-control-sm" accept=".csv, .xlsx, .xls">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">Or Quick Paste Lines (comma-separated):</label>
+              <textarea name="bulk_text" rows="3" class="form-control form-control-sm" placeholder="username, password, department, shift, weekoff, pl_quota&#10;eg: anita, Staff@123, IT, 09:30 AM - 06:30 PM, Sunday, 18"></textarea>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label class="form-label small text-muted mb-1">Fallback Dept:</label>
+                <select name="default_department" class="form-select form-select-sm">
+                  {% for d in departments %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label small text-muted mb-1">Default PL Quota:</label>
+                <input type="number" name="default_pl" class="form-control form-control-sm" value="18" min="0" max="60">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary-glow w-100 btn-sm">🚀 Upload &amp; Onboard Staff</button>
           </form>
         </div>
 

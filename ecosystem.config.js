@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'attendance-app',
       script: '/bin/gunicorn',
-      args: '-w 1 --threads 8 -b 0.0.0.0:5000 --timeout 60 app:app',
+      args: '-w 2 --threads 4 -b 0.0.0.0:5000 --timeout 60 app:app',
       interpreter: 'none',
       instances: 1,
       autorestart: true,

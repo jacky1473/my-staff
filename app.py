@@ -4,8 +4,11 @@ import pytz
 import logging
 import random
 import string
+import io
+import csv
+import gzip
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
 import shutil
@@ -36,14 +39,10 @@ SHIFT_OPTIONS = [
 ]
 WEEKDAY_OPTIONS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
-# Brute-force protection
-_login_attempts = {}
-MAX_ATTEMPTS    = 3  # Reduced from 5 to 3 for local network
-LOCKOUT_MINUTES = 5   # Reduced from 15 to 5
-
-# PIN storage: {username: {'pin': code, 'expires': datetime, 'role': 'Admin'|'Staff'}}
-_pin_storage = {}
-PIN_EXPIRY_MINUTES = 3  # 3 minute expiry
+# Brute-force protection & PIN security settings
+MAX_ATTEMPTS       = 3  # Allowed attempts before lockout
+LOCKOUT_MINUTES    = 5  # Lockout duration in minutes
+PIN_EXPIRY_MINUTES = 3  # PIN expiry duration in minutes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,12 +51,14 @@ logger = logging.getLogger(__name__)
 # Database
 # ---------------------------------------------------------------------------
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn = sqlite3.connect(DB_PATH, timeout=20.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode=WAL")   # Better concurrent access
     conn.execute("PRAGMA synchronous=NORMAL") # Faster writes, still safe
+    conn.execute("PRAGMA busy_timeout = 20000")
     conn.execute("PRAGMA cache_size = -64000")
+    conn.execute("PRAGMA mmap_size = 268435456") # 256MB memory mapped I/O
     return conn
 
 
@@ -179,6 +180,32 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_at TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN admin_remark TEXT")
 
+    # Tables for multi-worker concurrency (PIN auth & brute force lockout)
+    conn.execute('''CREATE TABLE IF NOT EXISTS login_pins (
+        username   TEXT PRIMARY KEY,
+        pin        TEXT NOT NULL,
+        expires    TEXT NOT NULL,
+        role       TEXT NOT NULL,
+        user_id    INTEGER NOT NULL,
+        department TEXT NOT NULL
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS login_lockouts (
+        username     TEXT PRIMARY KEY,
+        attempts     INTEGER NOT NULL DEFAULT 1,
+        locked_until TEXT
+    )''')
+
+    # High performance query indexes
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role_dept ON users(role, department)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance(user_id, date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_leaves_user_status ON leaves(user_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_logs(user_id, timestamp)")
+
     conn.commit()
     conn.close()
 
@@ -247,9 +274,13 @@ def calculate_hours_worked(clock_in, clock_out):
         return None
 
 
-def get_user_leave_summary(user_id):
+def get_user_leave_summary(user_id, conn=None):
     """Get leave balances: PL (Paid Leave), UL (Unpaid Leave), LWP (Leave Without Pay)"""
-    conn = get_db_connection()
+    close_needed = False
+    if conn is None:
+        conn = get_db_connection()
+        close_needed = True
+
     user = conn.execute("SELECT pl_quota FROM users WHERE id = ?", (user_id,)).fetchone()
     pl_quota = user['pl_quota'] if user and user['pl_quota'] is not None else 18
 
@@ -261,10 +292,12 @@ def get_user_leave_summary(user_id):
         FROM attendance WHERE user_id = ?
     ''', (user_id,)).fetchone()
 
-    pl_used = row['pl_used'] or 0
-    ul_used = row['ul_used'] or 0
-    lwp_used = row['lwp_used'] or 0
-    conn.close()
+    pl_used = (row['pl_used'] or 0) if row else 0
+    ul_used = (row['ul_used'] or 0) if row else 0
+    lwp_used = (row['lwp_used'] or 0) if row else 0
+
+    if close_needed:
+        conn.close()
 
     return {
         'pl_quota': pl_quota,
@@ -276,33 +309,42 @@ def get_user_leave_summary(user_id):
     }
 
 
-def get_today_stats():
+def get_today_stats(conn=None):
     today = today_str()
-    conn  = get_db_connection()
-    total   = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
-    present = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND clock_in IS NOT NULL", (today,)
-    ).fetchone()[0]
-    absent  = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='Absent'", (today,)
-    ).fetchone()[0]
-    pl_count = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='PL'", (today,)
-    ).fetchone()[0]
-    ul_count = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='UL'", (today,)
-    ).fetchone()[0]
-    lwp_count = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND status='LWP'", (today,)
-    ).fetchone()[0]
-    on_leave = conn.execute(
-        "SELECT COUNT(*) FROM attendance WHERE date=? AND status IN ('Leave', 'PL', 'UL', 'LWP')", (today,)
-    ).fetchone()[0]
+    close_needed = False
+    if conn is None:
+        conn = get_db_connection()
+        close_needed = True
+
+    total = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
+
+    # Optimized single aggregation query for attendance stats
+    row = conn.execute('''
+        SELECT 
+            SUM(CASE WHEN clock_in IS NOT NULL THEN 1 ELSE 0 END) AS present,
+            SUM(CASE WHEN status = 'Absent' THEN 1 ELSE 0 END) AS absent,
+            SUM(CASE WHEN status = 'PL' THEN 1 ELSE 0 END) AS pl_count,
+            SUM(CASE WHEN status = 'UL' THEN 1 ELSE 0 END) AS ul_count,
+            SUM(CASE WHEN status = 'LWP' THEN 1 ELSE 0 END) AS lwp_count,
+            SUM(CASE WHEN status IN ('Leave', 'PL', 'UL', 'LWP') THEN 1 ELSE 0 END) AS on_leave
+        FROM attendance WHERE date = ?
+    ''', (today,)).fetchone()
+
+    present   = (row['present'] or 0) if row else 0
+    absent    = (row['absent'] or 0) if row else 0
+    pl_count  = (row['pl_count'] or 0) if row else 0
+    ul_count  = (row['ul_count'] or 0) if row else 0
+    lwp_count = (row['lwp_count'] or 0) if row else 0
+    on_leave  = (row['on_leave'] or 0) if row else 0
+
     try:
         pending_leaves = conn.execute("SELECT COUNT(*) FROM leaves WHERE status='Pending'").fetchone()[0]
     except Exception:
         pending_leaves = 0
-    conn.close()
+
+    if close_needed:
+        conn.close()
+
     not_arrived = max(0, total - present - absent - on_leave)
     return {
         'total': total,
@@ -345,31 +387,94 @@ def log_audit(action, details=None, user_id=None, conn=None):
 
 
 # ---------------------------------------------------------------------------
-# Brute-force protection
+# Brute-force protection & Multi-Worker PIN Storage (SQLite-backed)
 # ---------------------------------------------------------------------------
 def _check_lockout(username):
-    entry = _login_attempts.get(username)
-    if not entry:
+    try:
+        conn = get_db_connection()
+        row = conn.execute("SELECT attempts, locked_until FROM login_lockouts WHERE username = ?", (username,)).fetchone()
+        conn.close()
+        if not row:
+            return False, 0
+        attempts, locked_until_str = row['attempts'], row['locked_until']
+        if locked_until_str:
+            locked_until = datetime.fromisoformat(locked_until_str)
+            if ist_now() < locked_until:
+                remaining = int((locked_until - ist_now()).total_seconds())
+                return True, remaining
         return False, 0
-    count, locked_until = entry
-    if locked_until and ist_now() < locked_until:
-        remaining = int((locked_until - ist_now()).total_seconds())
-        return True, remaining
-    return False, 0
+    except Exception as e:
+        logger.error(f"Lockout check error: {e}")
+        return False, 0
 
 
 def _record_failed_attempt(username):
-    entry = _login_attempts.get(username, [0, None])
-    count = entry[0] + 1
-    locked_until = None
-    if count >= MAX_ATTEMPTS:
-        locked_until = ist_now() + timedelta(minutes=LOCKOUT_MINUTES)
-        logger.warning("Account locked: %s after %d failed attempts", username, count)
-    _login_attempts[username] = [count, locked_until]
+    try:
+        conn = get_db_connection()
+        row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ?", (username,)).fetchone()
+        count = (row['attempts'] + 1) if row else 1
+        locked_until_str = None
+        if count >= MAX_ATTEMPTS:
+            locked_until = ist_now() + timedelta(minutes=LOCKOUT_MINUTES)
+            locked_until_str = locked_until.isoformat()
+            logger.warning("Account locked: %s after %d failed attempts", username, count)
+        conn.execute("INSERT OR REPLACE INTO login_lockouts (username, attempts, locked_until) VALUES (?, ?, ?)",
+                     (username, count, locked_until_str))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Record failed attempt error: {e}")
 
 
 def _clear_attempts(username):
-    _login_attempts.pop(username, None)
+    try:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM login_lockouts WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Clear attempts error: {e}")
+
+
+def _store_pin(username, pin, role, user_id, department):
+    try:
+        conn = get_db_connection()
+        expires = (ist_now() + timedelta(minutes=PIN_EXPIRY_MINUTES)).isoformat()
+        conn.execute("INSERT OR REPLACE INTO login_pins (username, pin, expires, role, user_id, department) VALUES (?, ?, ?, ?, ?, ?)",
+                     (username, pin, expires, role, user_id, department))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Store pin error: {e}")
+
+
+def _get_pin(username):
+    try:
+        conn = get_db_connection()
+        row = conn.execute("SELECT * FROM login_pins WHERE username = ?", (username,)).fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {
+            'pin': row['pin'],
+            'expires': datetime.fromisoformat(row['expires']),
+            'role': row['role'],
+            'user_id': row['user_id'],
+            'department': row['department']
+        }
+    except Exception as e:
+        logger.error(f"Get pin error: {e}")
+        return None
+
+
+def _clear_pin(username):
+    try:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM login_pins WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Clear pin error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -547,14 +652,7 @@ def login():
 
             # Generate PIN (4 digits, NO email needed!)
             pin = generate_pin()
-            pin_expires = ist_now() + timedelta(minutes=PIN_EXPIRY_MINUTES)
-            _pin_storage[username] = {
-                'pin': pin,
-                'expires': pin_expires,
-                'role': expected_role,
-                'user_id': user['id'],
-                'department': user['department']
-            }
+            _store_pin(username, pin, expected_role, user['id'], user['department'])
 
             # Store in session for verification page
             session['pending_login'] = {
@@ -568,12 +666,16 @@ def login():
             return render_template('pin_verify.html', username=username, pin_display=pin, login_type=login_type)
         else:
             _record_failed_attempt(username)
-            count = _login_attempts.get(username, [0])[0]
-            remaining = MAX_ATTEMPTS - count
-            if remaining > 0:
-                flash(f"Invalid credentials. {remaining} attempt(s) left.")
-            else:
+            locked, secs = _check_lockout(username)
+            if locked:
                 flash(f"Account locked for {LOCKOUT_MINUTES} minutes.")
+            else:
+                conn = get_db_connection()
+                row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ?", (username,)).fetchone()
+                conn.close()
+                count = row['attempts'] if row else 1
+                remaining = max(0, MAX_ATTEMPTS - count)
+                flash(f"Invalid credentials. {remaining} attempt(s) left.")
 
     return render_template('login.html')
 
@@ -592,18 +694,17 @@ def verify_pin():
         flash("Session mismatch. Please login again.")
         return redirect(url_for('login'))
 
-    if username not in _pin_storage:
+    pin_data = _get_pin(username)
+    if not pin_data:
         flash("PIN expired. Please login again.")
         if 'pending_login' in session:
             del session['pending_login']
         return redirect(url_for('login'))
 
-    pin_data = _pin_storage[username]
-
     # Check PIN expiry
     if ist_now() > pin_data['expires']:
         flash("PIN expired. Please login again.")
-        del _pin_storage[username]
+        _clear_pin(username)
         if 'pending_login' in session:
             del session['pending_login']
         return redirect(url_for('login'))
@@ -623,7 +724,7 @@ def verify_pin():
         return redirect(url_for('login'))
     
     _clear_attempts(username)
-    del _pin_storage[username]
+    _clear_pin(username)
     del session['pending_login']
 
     session['user_id']    = pending.get('user_id')
@@ -698,6 +799,50 @@ def forgot():
 
 
 # ---------------------------------------------------------------------------
+# High-Performance HTTP Caching & Compression Middleware
+# ---------------------------------------------------------------------------
+@app.after_request
+def optimize_response(response):
+    # Aggressive browser caching for static assets (CSS, JS, images, icons)
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'public, max-age=86400'
+
+    # Gzip compression for text, json, html, css, js responses > 500 bytes
+    accept_encoding = request.headers.get('Accept-Encoding', '').lower()
+    if ('gzip' in accept_encoding and
+        response.status_code == 200 and
+        not response.direct_passthrough and
+        'Content-Encoding' not in response.headers):
+        mimetype = response.mimetype
+        if mimetype in ('text/html', 'text/css', 'application/javascript', 'application/json'):
+            data = response.get_data()
+            if len(data) > 500:
+                buf = io.BytesIO()
+                with gzip.GzipFile(mode='wb', fileobj=buf, compresslevel=5) as gz:
+                    gz.write(data)
+                compressed = buf.getvalue()
+                if len(compressed) < len(data):
+                    response.set_data(compressed)
+                    response.headers['Content-Encoding'] = 'gzip'
+                    response.headers['Content-Length'] = len(compressed)
+                    response.headers['Vary'] = 'Accept-Encoding'
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Product Workflow & Interactive Guide
+# ---------------------------------------------------------------------------
+@app.route('/workflow')
+def workflow():
+    """Product workflow, operational guide & architecture tour"""
+    conn = get_db_connection()
+    company_row = conn.execute("SELECT name FROM company LIMIT 1").fetchone()
+    conn.close()
+    company_name = company_row['name'] if company_row else 'StaffPortal'
+    return render_template('workflow.html', company_name=company_name)
+
+
+# ---------------------------------------------------------------------------
 # Index & Routing
 # ---------------------------------------------------------------------------
 @app.route('/')
@@ -752,9 +897,8 @@ def staff_dashboard():
     except Exception:
         notifications = []
 
+    leave_summary = get_user_leave_summary(user_id, conn=conn)
     conn.close()
-
-    leave_summary = get_user_leave_summary(user_id)
 
     today_hours = None
     if today_record and today_record['clock_in']:
@@ -941,6 +1085,7 @@ def admin_dashboard():
         ORDER BY u.department, u.username
     ''', (today,)).fetchall()
 
+    stats = get_today_stats(conn=conn)
     conn.close()
 
     return render_template(
@@ -954,7 +1099,7 @@ def admin_dashboard():
         shift_options=SHIFT_OPTIONS,
         weekday_options=WEEKDAY_OPTIONS,
         departments=ALLOWED_DEPARTMENTS,
-        stats=get_today_stats(),
+        stats=stats,
     )
 
 
@@ -1293,6 +1438,162 @@ def admin_action():
         conn.close()
 
     return redirect(url_for('admin_dashboard'))
+
+
+# ---------------------------------------------------------------------------
+# Bulk User Onboarding (Industry Standard CSV / Excel / Paste)
+# ---------------------------------------------------------------------------
+@app.route('/admin/users/bulk-upload', methods=['POST'])
+def bulk_upload_users():
+    if 'user_id' not in session or session.get('role') != 'Admin':
+        return redirect(url_for('login'))
+
+    default_dept = request.form.get('default_department', 'IT')
+    default_shift = request.form.get('default_shift', '09:30 AM - 06:30 PM')
+    default_weekoff = request.form.get('default_weekoff', 'Sunday')
+    try:
+        default_pl = int(request.form.get('default_pl', 18) or 18)
+    except Exception:
+        default_pl = 18
+
+    records = []
+    file = request.files.get('file')
+    bulk_text = request.form.get('bulk_text', '').strip()
+
+    # 1. Process uploaded file (.csv, .xlsx, .xls)
+    if file and file.filename:
+        filename = file.filename.lower()
+        try:
+            if filename.endswith('.csv'):
+                content = file.stream.read().decode('utf-8', errors='ignore')
+                stream = io.StringIO(content)
+                reader = csv.DictReader(stream)
+                for row in reader:
+                    records.append(row)
+            elif filename.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(file)
+                df.columns = [str(c).strip().lower() for c in df.columns]
+                for _, row in df.iterrows():
+                    records.append(row.to_dict())
+            else:
+                flash("Unsupported file format! Please upload a .csv or .xlsx file.")
+                return redirect(url_for('admin_dashboard'))
+        except Exception as e:
+            flash(f"Error reading file: {e}")
+            return redirect(url_for('admin_dashboard'))
+
+    # 2. Or process pasted text
+    elif bulk_text:
+        lines = [l.strip() for l in bulk_text.splitlines() if l.strip()]
+        for line in lines:
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) >= 1 and parts[0]:
+                records.append({
+                    'username': parts[0],
+                    'password': parts[1] if len(parts) > 1 else 'Staff@123',
+                    'department': parts[2] if len(parts) > 2 else default_dept,
+                    'shift': parts[3] if len(parts) > 3 else default_shift,
+                    'weekoff': parts[4] if len(parts) > 4 else default_weekoff,
+                    'pl_quota': parts[5] if len(parts) > 5 else default_pl,
+                })
+    else:
+        flash("No file selected or text provided for bulk upload.")
+        return redirect(url_for('admin_dashboard'))
+
+    if not records:
+        flash("No valid employee records found to import.")
+        return redirect(url_for('admin_dashboard'))
+
+    conn = get_db_connection()
+    existing_users = set(r[0].lower() for r in conn.execute("SELECT username FROM users").fetchall())
+
+    added_count = 0
+    skipped_duplicates = []
+    to_insert = []
+
+    def get_val(rec, keys, default=''):
+        for k in keys:
+            for rk in rec:
+                if str(rk).strip().lower() == k.lower() and rec[rk] is not None:
+                    val = str(rec[rk]).strip()
+                    if val and val.lower() != 'nan':
+                        return val
+        return default
+
+    for rec in records:
+        u_name = get_val(rec, ['username', 'user', 'name', 'employee_name'])
+        if not u_name:
+            continue
+        u_name = u_name.strip()
+        if len(u_name) < 2:
+            continue
+
+        if u_name.lower() in existing_users:
+            skipped_duplicates.append(u_name)
+            continue
+
+        u_pass = get_val(rec, ['password', 'pass'], 'Staff@123')
+        if len(u_pass) < 4:
+            u_pass = 'Staff@123'
+        u_dept = get_val(rec, ['department', 'dept'], default_dept)
+        if u_dept not in ALLOWED_DEPARTMENTS:
+            u_dept = default_dept if default_dept in ALLOWED_DEPARTMENTS else ALLOWED_DEPARTMENTS[0]
+        u_shift = get_val(rec, ['shift'], default_shift)
+        if u_shift not in SHIFT_OPTIONS:
+            u_shift = default_shift
+        u_weekoff = get_val(rec, ['weekoff', 'week_off'], default_weekoff)
+        if u_weekoff not in WEEKDAY_OPTIONS:
+            u_weekoff = default_weekoff
+        u_pl = get_val(rec, ['pl_quota', 'pl'], str(default_pl))
+        try:
+            pl_val = int(float(u_pl))
+        except Exception:
+            pl_val = default_pl
+
+        hashed_pass = generate_password_hash(u_pass)
+        to_insert.append((
+            u_name, hashed_pass, u_dept, 'Staff', u_shift, u_weekoff, pl_val, 'Set by admin', 'yes'
+        ))
+        existing_users.add(u_name.lower())
+        added_count += 1
+
+    if to_insert:
+        conn.executemany(
+            '''INSERT INTO users (username, password, department, role, shift, weekoff, pl_quota, security_question, security_answer)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            to_insert
+        )
+        conn.commit()
+        log_audit('BULK_USERS_CREATED', f"Imported {added_count} staff employees", session['user_id'], conn=conn)
+
+    conn.close()
+
+    msg = f"✅ Bulk Import Complete: Successfully added {added_count} new employees!"
+    if skipped_duplicates:
+        dup_names = ', '.join(skipped_duplicates[:5]) + ('...' if len(skipped_duplicates) > 5 else '')
+        msg += f" {len(skipped_duplicates)} skipped (already exist: {dup_names})."
+    flash(msg, "success" if added_count > 0 else "warning")
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/users/template')
+def download_user_template():
+    """Download CSV template for bulk employee import"""
+    if 'user_id' not in session or session.get('role') != 'Admin':
+        return redirect(url_for('login'))
+
+    csv_content = (
+        "username,password,department,shift,weekoff,pl_quota\n"
+        "rahul_kumar,Staff@123,IT,09:30 AM - 06:30 PM,Sunday,18\n"
+        "priya_patel,Staff@123,MIS,10:30 AM - 07:30 PM,Sunday,18\n"
+        "aman_sharma,Staff@123,QA,09:30 AM - 06:30 PM,Saturday,18\n"
+        "pooja_verma,Staff@123,Management,09:30 AM - 06:30 PM,Sunday,18\n"
+    )
+    return Response(
+        csv_content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=employee_bulk_template.csv"}
+    )
 
 
 # ---------------------------------------------------------------------------
