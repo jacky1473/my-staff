@@ -23,12 +23,14 @@ BACKUP_DIR = os.environ.get('BACKUP_DIR', './backups')
 # Ensure backup directory exists
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
-ALLOWED_DEPARTMENTS = ['IT', 'MIS', 'QA', 'TL', 'Manager', 'Management']
+ALLOWED_DEPARTMENTS = ['IT', 'MIS', 'QA', 'TL','Trainer','Admin','Manager', 'Management']
 SHIFT_OPTIONS = [
-    '09:00 AM - 06:00 PM',
-    '10:00 AM - 07:00 PM',
-    '12:00 PM - 09:00 PM',
-    '02:00 PM - 11:00 PM',
+    '09:30 AM - 06:30 PM',
+    '10:30 AM - 07:00 PM',
+    '10:30 AM - 07:30 PM',
+    '11:30 AM - 09:30 PM',
+    '12:30 PM - 09:30 PM',
+    '05:30 PM - 02:30 AM',
     'Night Shift',
     'Flexible',
 ]
