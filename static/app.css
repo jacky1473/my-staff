@@ -863,3 +863,56 @@ textarea.form-control {
     min-width: 560px;
   }
 }
+
+/* 27. LIGHT MODE REFINED STYLING */
+html.light-mode body, :root.light-mode body {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+  animation: none !important;
+}
+
+html.light-mode .glass-card, :root.light-mode .glass-card {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.06) !important;
+  color: #0f172a !important;
+}
+
+html.light-mode .elevated-card, :root.light-mode .elevated-card {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.06) !important;
+  color: #0f172a !important;
+}
+
+html.light-mode .table-premium th, :root.light-mode .table-premium th {
+  background: #f1f5f9 !important;
+  color: #334155 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
+html.light-mode .table-premium td, :root.light-mode .table-premium td {
+  color: #0f172a !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+html.light-mode .stat-card, :root.light-mode .stat-card {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.04) !important;
+}
+
+html.light-mode .page-title, :root.light-mode .page-title,
+html.light-mode .page-subtitle, :root.light-mode .page-subtitle,
+html.light-mode .stat-number, :root.light-mode .stat-number {
+  color: #0f172a !important;
+}
+
+html.light-mode .text-muted, :root.light-mode .text-muted {
+  color: #64748b !important;
+}
+
+html.light-mode .app-global-footer {
+  background: #f1f5f9 !important;
+  border-top-color: #e2e8f0 !important;
+}

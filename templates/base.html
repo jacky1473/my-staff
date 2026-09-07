@@ -21,6 +21,19 @@
 
 {% block body %}{% endblock %}
 
+<footer class="app-global-footer py-3 mt-4" style="border-top: 1px solid var(--glass-border); background: rgba(0,0,0,0.2);">
+  <div class="container d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <img src="/static/jck-icon.svg" alt="JCK Software" style="height: 20px; width: 20px;">
+      <span class="text-muted small">© {{ current_year }} <strong>{{ copyright_company }}</strong>. All rights reserved.</span>
+    </div>
+    <div class="small">
+      <a href="/sales" class="text-decoration-none text-muted me-3">💼 Product Overview</a>
+      <a href="/workflow" class="text-decoration-none text-muted">📖 Architecture</a>
+    </div>
+  </div>
+</footer>
+
 <script src="/static/vendor/bootstrap.bundle.min.js"></script>
 <script src="/static/app.js"></script>
 {% block scripts %}{% endblock %}

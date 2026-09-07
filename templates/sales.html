@@ -1,0 +1,783 @@
+{% extends "base.html" %}
+
+{% block title %}StaffPortal Enterprise OS — By JCK Software{% endblock %}
+
+{% block head %}
+<style>
+  :root {
+    --sales-accent: #00d9ff;
+    --sales-emerald: #10b981;
+    --sales-indigo: #6366f1;
+  }
+  
+  .sales-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 2rem;
+    background: rgba(10, 18, 25, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--glass-border);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+  }
+  
+  html.light-mode .sales-nav {
+    background: rgba(255, 255, 255, 0.9);
+    border-bottom-color: #e2e8f0;
+  }
+
+  .brand-logo-img {
+    height: 48px;
+    width: auto;
+    max-width: 240px;
+  }
+
+  .hero-section {
+    padding: 5rem 1.5rem 4rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(0, 217, 255, 0.1);
+    border: 1px solid rgba(0, 217, 255, 0.3);
+    color: var(--sales-accent);
+    padding: 0.4rem 1.2rem;
+    border-radius: 9999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 1.5rem;
+  }
+
+  .hero-title {
+    font-size: clamp(2.2rem, 5.5vw, 3.8rem);
+    font-weight: 900;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    max-width: 960px;
+    margin: 0 auto 1.5rem;
+    background: linear-gradient(135deg, #ffffff 30%, #38bdf8 70%, #10b981 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  html.light-mode .hero-title {
+    background: linear-gradient(135deg, #0f172a 30%, #0284c7 70%, #059669 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .hero-subtitle {
+    font-size: clamp(1.05rem, 2vw, 1.25rem);
+    color: var(--text-muted);
+    max-width: 780px;
+    margin: 0 auto 2.5rem;
+    line-height: 1.6;
+  }
+
+  .cta-group {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 3rem;
+  }
+
+  .stat-ribbon {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.5rem;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+  }
+
+  .stat-ribbon-item {
+    text-align: center;
+  }
+  .stat-ribbon-num {
+    font-size: 2.2rem;
+    font-weight: 900;
+    color: var(--sales-accent);
+    font-family: 'Monaco', monospace;
+  }
+  .stat-ribbon-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 0.25rem;
+  }
+
+  /* Section Containers */
+  .sales-container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 4rem 1.5rem;
+  }
+
+  .section-tag {
+    color: var(--sales-accent);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-size: 0.85rem;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .section-heading {
+    font-size: clamp(1.8rem, 3.5vw, 2.6rem);
+    font-weight: 800;
+    margin-bottom: 1rem;
+  }
+
+  .section-desc {
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    max-width: 700px;
+    line-height: 1.6;
+    margin-bottom: 2.5rem;
+  }
+
+  /* Remote Company Overview Box */
+  .company-feature-card {
+    padding: 2.5rem;
+    background: linear-gradient(135deg, rgba(15, 30, 46, 0.9), rgba(10, 18, 25, 0.9));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    position: relative;
+    overflow: hidden;
+  }
+
+  html.light-mode .company-feature-card {
+    background: linear-gradient(135deg, #ffffff, #f1f5f9);
+    border-color: #cbd5e1;
+  }
+
+  .company-feature-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: linear-gradient(180deg, var(--sales-accent), var(--sales-emerald));
+  }
+
+  /* Demo Card Interactive Box */
+  .demo-card {
+    border: 1.5px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    padding: 2rem;
+    transition: all 0.3s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .demo-card:hover {
+    transform: translateY(-6px);
+    border-color: var(--sales-accent);
+    box-shadow: 0 15px 35px rgba(0, 217, 255, 0.15);
+  }
+
+  .demo-badge-admin {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .demo-badge-staff {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .creds-box {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px dashed var(--glass-border);
+    border-radius: 0.5rem;
+    padding: 0.85rem;
+    margin: 1.25rem 0;
+    font-family: 'Monaco', monospace;
+    font-size: 0.85rem;
+  }
+  html.light-mode .creds-box {
+    background: #e2e8f0;
+    color: #0f172a;
+  }
+
+  /* Pricing Cards */
+  .pricing-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 2.5rem 2rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+  .pricing-card.popular {
+    border: 2px solid var(--sales-accent);
+    background: linear-gradient(180deg, rgba(0, 217, 255, 0.05) 0%, var(--bg-secondary) 100%);
+    box-shadow: 0 10px 40px rgba(0, 217, 255, 0.15);
+  }
+  .popular-tag {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(90deg, var(--sales-accent), var(--sales-emerald));
+    color: #000;
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 1rem;
+    border-radius: 9999px;
+  }
+
+  .price-amount {
+    font-size: 2.8rem;
+    font-weight: 900;
+    color: #ffffff;
+    margin: 1rem 0 0.5rem;
+  }
+  html.light-mode .price-amount {
+    color: #0f172a;
+  }
+
+  .feature-list {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0;
+  }
+  .feature-list li {
+    padding: 0.5rem 0;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  /* Contact Form */
+  .contact-box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 3rem 2.5rem;
+    box-shadow: var(--shadow-lg);
+  }
+
+  @media (max-width: 767px) {
+    .sales-nav { padding: 1rem; }
+    .hero-section { padding: 3rem 1rem 2rem; }
+    .contact-box { padding: 1.75rem 1.25rem; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<!-- 1. TOP NAVIGATION -->
+<header class="sales-nav">
+  <div class="d-flex align-items-center gap-3">
+    <a href="/sales" class="d-flex align-items-center text-decoration-none">
+      <img src="/static/jck-logo.svg" alt="JCK Software" class="brand-logo-img">
+    </a>
+  </div>
+  
+  <div class="d-none d-md-flex align-items-center gap-4">
+    <a href="#about-company" class="text-muted text-decoration-none small fw-bold">Company</a>
+    <a href="#features" class="text-muted text-decoration-none small fw-bold">Features</a>
+    <a href="#demos" class="text-muted text-decoration-none small fw-bold">Live Demos</a>
+    <a href="#pricing" class="text-muted text-decoration-none small fw-bold">Pricing</a>
+    <a href="#contact" class="text-muted text-decoration-none small fw-bold">Contact Sales</a>
+    <a href="/workflow" class="text-muted text-decoration-none small fw-bold">📖 Architecture</a>
+  </div>
+
+  <div class="d-flex align-items-center gap-2">
+    <button id="theme-toggle" class="theme-toggle" title="Toggle Light / Dark Mode"></button>
+    <a href="#demos" class="btn btn-primary-glow btn-sm fw-bold">🚀 Test Demo</a>
+  </div>
+</header>
+
+<!-- Flash Alerts if any inquiry submitted -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="container mt-3">
+      {% for category, msg in messages %}
+        <div class="flash-alert alert alert-{{ category if category != 'error' else 'danger' }}" role="alert">{{ msg }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<!-- 2. HERO SECTION -->
+<section class="hero-section">
+  <div class="container">
+    <div class="hero-badge">
+      <span>🛡️ ENTERPRISE WORKFORCE &amp; ATTENDANCE OS</span>
+    </div>
+    <h1 class="hero-title">
+      Zero-Lag Attendance, Statutory Leave &amp; Shift Management For Modern Enterprises
+    </h1>
+    <p class="hero-subtitle">
+      Engineered by <strong>JCK software</strong> — a high-performance remote engineering studio delivering mission-critical, tamper-proof, and lightning-fast digital workplace systems.
+    </p>
+
+    <div class="cta-group">
+      <a href="#demos" class="btn btn-primary-glow btn-lg px-4 py-2">
+        🎯 Launch Live Interactive Demo
+      </a>
+      <a href="#pricing" class="btn btn-secondary-glow btn-lg px-4 py-2">
+        💼 View Commercial Licenses
+      </a>
+      <a href="#contact" class="btn btn-secondary-glow btn-lg px-4 py-2">
+        📞 Request Custom Deployment
+      </a>
+    </div>
+
+    <!-- Live Performance Metrics Ribbon -->
+    <div class="stat-ribbon">
+      <div class="stat-ribbon-item">
+        <div class="stat-ribbon-num">&lt; 5ms</div>
+        <div class="stat-ribbon-label">Database Response Time</div>
+      </div>
+      <div class="stat-ribbon-item">
+        <div class="stat-ribbon-num">100%</div>
+        <div class="stat-ribbon-label">Indian Labor Compliance</div>
+      </div>
+      <div class="stat-ribbon-item">
+        <div class="stat-ribbon-num">99.9%</div>
+        <div class="stat-ribbon-label">Uptime SLA Guaranteed</div>
+      </div>
+      <div class="stat-ribbon-item">
+        <div class="stat-ribbon-num">2-Sec</div>
+        <div class="stat-ribbon-label">100+ Staff Bulk Onboarding</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. ABOUT JCK SOFTWARE (Remote Software Company Overview) -->
+<section id="about-company" class="sales-container pt-0">
+  <div class="company-feature-card">
+    <div class="row align-items-center g-4">
+      <div class="col-lg-7">
+        <span class="section-tag">WHO WE ARE</span>
+        <h2 class="section-heading mb-3">Engineered by JCK software</h2>
+        <p class="text-muted" style="font-size: 1.05rem; line-height: 1.7;">
+          <strong>JCK software</strong> is a modern, remote-first software development firm specializing in cloud architectures, high-concurrency microservices, and secure enterprise workplace solutions. We operate globally, building reliable and battle-tested software systems directly tailored to each client's unique operational needs.
+        </p>
+        <p class="text-muted" style="font-size: 1.05rem; line-height: 1.7;">
+          Unlike generic SaaS apps that lock your data into proprietary vendor clouds with monthly per-user subscription traps, JCK Software provides <strong>direct deployment on your private servers</strong> (on-premise or cloud) with <strong>100% data ownership</strong>, automated daily snapshots, and zero third-party telemetry.
+        </p>
+
+        <div class="row g-3 mt-2">
+          <div class="col-sm-6">
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-success fs-5">✓</span>
+              <span class="fw-bold small">100% Remote Agility &amp; Quick Turnaround</span>
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-success fs-5">✓</span>
+              <span class="fw-bold small">Bank-Grade Encryption &amp; Audit Logs</span>
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-success fs-5">✓</span>
+              <span class="fw-bold small">Zero Data Loss &amp; Automated Backups</span>
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-success fs-5">✓</span>
+              <span class="fw-bold small">White-Label Branding for Clients</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-5 text-center">
+        <div class="p-4 rounded-4" style="background: rgba(0, 217, 255, 0.05); border: 1px solid var(--glass-border);">
+          <img src="/static/jck-logo.svg" alt="JCK Software Logo" class="img-fluid mb-3" style="max-height: 80px;">
+          <h5 class="fw-bold mb-1">Your Trusted Remote Tech Partner</h5>
+          <p class="small text-muted mb-3">Enterprise Cloud • Microservices • Attendance Engines</p>
+          <div class="badge bg-success bg-opacity-25 text-success p-2 px-3 fw-bold">
+            🟢 Active Production &amp; Staging Deployments
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. LIVE INTERACTIVE DEMO (User's Requirement) -->
+<section id="demos" class="sales-container">
+  <div class="text-center mb-5">
+    <span class="section-tag">TEST DRIVE NOW</span>
+    <h2 class="section-heading">Experience the Product Live in Action</h2>
+    <p class="section-desc mx-auto">
+      Test both management and employee viewpoints right now on our live running nodes. Click below to launch the interactive portal.
+    </p>
+  </div>
+
+  <div class="row g-4">
+    <!-- Admin Portal Demo -->
+    <div class="col-lg-6">
+      <div class="demo-card">
+        <div>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="demo-badge-admin">👨‍💼 HR &amp; Executive Portal</span>
+            <span class="badge bg-secondary">Full Control</span>
+          </div>
+          <h4 class="fw-bold mb-2">Manager / Admin Dashboard</h4>
+          <p class="text-muted small mb-3">
+            Full administrative authority: approve/reject leave applications, issue formal disciplinary notices, upload employee rosters via Excel, and monitor live attendance ledgers.
+          </p>
+
+          <ul class="feature-list small text-muted">
+            <li>✅ Real-time Daily Attendance Ledger with Hours Worked</li>
+            <li>✅ Statutory PL, UL &amp; LWP Balance Governance</li>
+            <li>✅ 1-Click Excel / CSV Bulk Employee Onboarding</li>
+            <li>✅ Permanent Tamper-Proof Audit Trail (IP &amp; Timestamps)</li>
+            <li>✅ Automated Daily Database Backups &amp; 1-Click Restore</li>
+          </ul>
+
+          <div class="creds-box">
+            <div class="text-muted small mb-1">DEMO LOGIN CREDENTIALS:</div>
+            <div>Username: <strong class="text-info">admin</strong></div>
+            <div>Role: <strong class="text-info">Admin</strong></div>
+            <div class="text-muted mt-1" style="font-size: 0.75rem;">*PIN will be generated on screen for secure 2FA simulation.</div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+          <a href="/login" class="btn btn-primary-glow w-100 fw-bold">
+            🚀 Launch Admin Demo (Port 5000)
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Staff Portal Demo -->
+    <div class="col-lg-6">
+      <div class="demo-card">
+        <div>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="demo-badge-staff">👤 Employee Self-Service</span>
+            <span class="badge bg-secondary">Staff View</span>
+          </div>
+          <h4 class="fw-bold mb-2">Staff Attendance &amp; Leave Portal</h4>
+          <p class="text-muted small mb-3">
+            Intuitive self-service workstation: 1-tap clock in/out, personal live shift duration tracker, leave balance wallet, and company broadcast notices.
+          </p>
+
+          <ul class="feature-list small text-muted">
+            <li>✅ 1-Tap Daily Clock In / Clock Out with Live Duration</li>
+            <li>✅ Real-time Paid Leave (PL) Quota Remaining Counter</li>
+            <li>✅ Instant Leave Request Filing with Reason &amp; Status Tracking</li>
+            <li>✅ Personal 14-Day Attendance Ledger &amp; Full History View</li>
+            <li>✅ Instant Notification Inbox for Official Company Notices</li>
+          </ul>
+
+          <div class="creds-box">
+            <div class="text-muted small mb-1">SAMPLE STAFF CREDENTIALS:</div>
+            <div>Username: <strong class="text-success">Farman</strong> or <strong class="text-success">rahul_kumar</strong></div>
+            <div>Role: <strong class="text-success">Staff</strong></div>
+            <div class="text-muted mt-1" style="font-size: 0.75rem;">*Experience seamless employee clocking and leave application.</div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+          <a href="/login" class="btn btn-secondary-glow w-100 fw-bold">
+            👤 Launch Staff Demo (Port 5000)
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Node Status Indicator -->
+  <div class="text-center mt-4">
+    <span class="badge bg-dark border border-secondary text-muted px-3 py-2">
+      ⚡ Live Testing Nodes: <a href="http://127.0.0.1:5000" class="text-info text-decoration-none fw-bold">Production (5000)</a> • <a href="http://127.0.0.1:5001" class="text-success text-decoration-none fw-bold">Staging (5001)</a>
+    </span>
+  </div>
+</section>
+
+<!-- 5. CORE PRODUCT FEATURES (B2B Selling Points) -->
+<section id="features" class="sales-container pt-0">
+  <div class="text-center mb-5">
+    <span class="section-tag">BUILT FOR SCALE</span>
+    <h2 class="section-heading">Everything Your Organization Needs</h2>
+    <p class="section-desc mx-auto">
+      Packed with features designed to eliminate time theft, automate HR bureaucracy, and guarantee compliance.
+    </p>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-md-4">
+      <div class="elevated-card p-4 h-100">
+        <div class="fs-2 mb-3">🕒</div>
+        <h5 class="fw-bold mb-2">Smart Shift Rotations</h5>
+        <p class="text-muted small mb-0">
+          Support for morning, evening, night, and flexible shifts with customized weekly off enforcement. Employees cannot punch in outside their scheduled shift parameters.
+        </p>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="elevated-card p-4 h-100">
+        <div class="fs-2 mb-3">🌴</div>
+        <h5 class="fw-bold mb-2">3-Tier Statutory Leaves</h5>
+        <p class="text-muted small mb-0">
+          Enforces Indian labor policies: Paid Leave (PL quota), Unpaid Leave (UL), and Leave Without Pay (LWP). Automatically validates quota balances before accepting applications.
+        </p>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="elevated-card p-4 h-100">
+        <div class="fs-2 mb-3">👥</div>
+        <h5 class="fw-bold mb-2">1-Click Bulk Onboarding</h5>
+        <p class="text-muted small mb-0">
+          Import 50 to 500+ employees instantly using standard CSV or Excel files, or quick-paste lines with fallback department and default quota assignment.
+        </p>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="elevated-card p-4 h-100">
+        <div class="fs-2 mb-3">🛡️</div>
+        <h5 class="fw-bold mb-2">Forensic Audit Trails</h5>
+        <p class="text-muted small mb-0">
+          Every login, password reset, warning issuance, leave approval, and database restore is stamped with a precise timestamp and user IP address for total compliance.
+        </p>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="elevated-card p-4 h-100">
+        <div class="fs-2 mb-3">💾</div>
+        <h5 class="fw-bold mb-2">Automated Midnight Backups</h5>
+        <p class="text-muted small mb-0">
+          Automated background snapshot engine ensures daily zero-loss disaster recovery with 1-click database rollbacks directly from the management console.
+        </p>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="elevated-card p-4 h-100">
+        <div class="fs-2 mb-3">⚡</div>
+        <h5 class="fw-bold mb-2">Sub-5ms Execution Engine</h5>
+        <p class="text-muted small mb-0">
+          Tuned SQLite WAL engine with memory-mapped caching and multi-worker threads handling concurrent clock-ins in less than 5 milliseconds without lag.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. PRICING & LICENSING (Commercial Tiers) -->
+<section id="pricing" class="sales-container">
+  <div class="text-center mb-5">
+    <span class="section-tag">COMMERCIAL LICENSES</span>
+    <h2 class="section-heading">Transparent, Predictable Pricing</h2>
+    <p class="section-desc mx-auto">
+      No hidden per-user monthly penalties. Choose a perpetual lifetime license or a monthly managed remote setup by JCK Software.
+    </p>
+  </div>
+
+  <div class="row g-4 align-items-stretch">
+    <!-- Tier 1 -->
+    <div class="col-lg-4">
+      <div class="pricing-card">
+        <div>
+          <h5 class="fw-bold mb-1">Starter Edition</h5>
+          <p class="text-muted small">Ideal for single-location offices &amp; startups</p>
+          <div class="price-amount">₹4,999<span class="fs-6 text-muted fw-normal"> / lifetime</span></div>
+          <p class="text-muted small">or ₹999/month managed</p>
+          <hr class="bg-secondary opacity-25 my-3">
+
+          <ul class="feature-list">
+            <li>✅ Up to 50 Active Staff Employees</li>
+            <li>✅ Core Attendance &amp; Shift Timer</li>
+            <li>✅ Statutory PL/UL/LWP Balances</li>
+            <li>✅ 1-Click CSV Bulk Import</li>
+            <li>✅ Manual &amp; Auto Daily Backups</li>
+            <li>✅ Responsive Mobile PWA</li>
+            <li>❌ Custom Domain &amp; SSL (Optional add-on)</li>
+          </ul>
+        </div>
+        <a href="#contact" class="btn btn-secondary-glow w-100 fw-bold mt-3">Select Starter</a>
+      </div>
+    </div>
+
+    <!-- Tier 2 (Popular) -->
+    <div class="col-lg-4">
+      <div class="pricing-card popular">
+        <div class="popular-tag">MOST POPULAR • BEST ROI</div>
+        <div>
+          <h5 class="fw-bold mb-1 text-info">Enterprise Business</h5>
+          <p class="text-muted small">For growing firms, agencies &amp; factories</p>
+          <div class="price-amount">₹14,999<span class="fs-6 text-muted fw-normal"> / lifetime</span></div>
+          <p class="text-muted small">or ₹2,499/month with remote support</p>
+          <hr class="bg-secondary opacity-25 my-3">
+
+          <ul class="feature-list">
+            <li>✅ <strong>Unlimited</strong> Staff &amp; Departments</li>
+            <li>✅ Multi-Shift Rotations &amp; Week-offs</li>
+            <li>✅ Full Disciplinary Warning Management</li>
+            <li>✅ Excel Monthly/Weekly Payroll Ledger Export</li>
+            <li>✅ 2FA PIN Session Verification</li>
+            <li>✅ White-Label Client Logo &amp; Branding</li>
+            <li>✅ Priority Remote Engineering by JCK Software</li>
+          </ul>
+        </div>
+        <a href="#contact" class="btn btn-primary-glow w-100 fw-bold mt-3">Deploy Enterprise</a>
+      </div>
+    </div>
+
+    <!-- Tier 3 -->
+    <div class="col-lg-4">
+      <div class="pricing-card">
+        <div>
+          <h5 class="fw-bold mb-1">Custom Cloud &amp; Source</h5>
+          <p class="text-muted small">For SaaS vendors, conglomerates &amp; MSPs</p>
+          <div class="price-amount">Custom<span class="fs-6 text-muted fw-normal"> quote</span></div>
+          <p class="text-muted small">Tailored engineering package</p>
+          <hr class="bg-secondary opacity-25 my-3">
+
+          <ul class="feature-list">
+            <li>✅ Full Source Code Ownership &amp; Rights</li>
+            <li>✅ Dedicated Remote Server Setup by JCK Engineers</li>
+            <li>✅ PostgreSQL / MySQL Migration Option</li>
+            <li>✅ WhatsApp / SMS OTP Gateway Integration</li>
+            <li>✅ Biometric Hardware / Geo-Fencing API</li>
+            <li>✅ Dedicated SLA &amp; 24/7 Priority Support</li>
+          </ul>
+        </div>
+        <a href="#contact" class="btn btn-secondary-glow w-100 fw-bold mt-3">Request Custom Quote</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. CONTACT & INQUIRY FORM -->
+<section id="contact" class="sales-container">
+  <div class="contact-box">
+    <div class="row g-4 align-items-center">
+      <div class="col-lg-6">
+        <span class="section-tag">LET'S CONNECT</span>
+        <h2 class="section-heading mb-3">Ready to Deploy or Request a Custom Build?</h2>
+        <p class="text-muted" style="line-height: 1.6;">
+          Speak directly with the engineering team at <strong>JCK software</strong>. Whether you need a turnkey installation on your private server, custom feature development, or a white-label partnership, we are ready to assist.
+        </p>
+
+        <div class="mt-4">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="fs-4">📧</div>
+            <div>
+              <div class="small text-muted">Direct Email:</div>
+              <strong class="text-info">sales@jcksoftware.com</strong>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="fs-4">🌍</div>
+            <div>
+              <div class="small text-muted">Operating Model:</div>
+              <strong>Remote-First Engineering (Serving Clients Globally)</strong>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-3">
+            <div class="fs-4">⚡</div>
+            <div>
+              <div class="small text-muted">Response Time:</div>
+              <strong class="text-success">Within 24 Hours Guaranteed</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <form action="/sales/inquire" method="POST" class="p-3 rounded-4" style="background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border);">
+          <h5 class="fw-bold mb-3">Send Us an Inquiry</h5>
+
+          <div class="mb-3">
+            <label class="form-label small text-muted">Your Name *</label>
+            <input type="text" name="name" class="form-control" placeholder="John Doe" required>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Work Email *</label>
+              <input type="email" name="email" class="form-control" placeholder="john@company.com" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Phone / WhatsApp</label>
+              <input type="tel" name="phone" class="form-control" placeholder="+91 98765 43210">
+            </div>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Company Name</label>
+              <input type="text" name="company" class="form-control" placeholder="Acme Corp">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted">Team Size</label>
+              <select name="team_size" class="form-select">
+                <option value="10-50">10 – 50 Employees</option>
+                <option value="50-200">50 – 200 Employees</option>
+                <option value="200-500">200 – 500 Employees</option>
+                <option value="500+">500+ Employees (Enterprise)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small text-muted">Project Requirements / Message</label>
+            <textarea name="message" rows="3" class="form-control" placeholder="Describe your deployment requirements or questions..."></textarea>
+          </div>
+
+          <button type="submit" class="btn btn-primary-glow w-100 fw-bold py-2">
+            🚀 Submit Inquiry to JCK Software
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

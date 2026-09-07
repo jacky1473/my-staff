@@ -13,6 +13,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
 import shutil
 import json
+import threading
+import time
 
 # ---------------------------------------------------------------------------
 # App Setup
@@ -176,9 +178,13 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN pl_quota INTEGER DEFAULT 18")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_by TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_at TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN admin_remark TEXT")
+
+    # Ensure existing users default to active
+    conn.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
 
     # Tables for multi-worker concurrency (PIN auth & brute force lockout)
     conn.execute('''CREATE TABLE IF NOT EXISTS login_pins (
@@ -196,9 +202,22 @@ def init_db():
         locked_until TEXT
     )''')
 
+    # B2B Product inquiries table for sales landing page
+    conn.execute('''CREATE TABLE IF NOT EXISTS inquiries (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        phone      TEXT,
+        company    TEXT,
+        team_size  TEXT,
+        message    TEXT,
+        created_at TEXT NOT NULL
+    )''')
+
     # High performance query indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role_dept ON users(role, department)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_user_date_uniq ON attendance(user_id, date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leaves_user_status ON leaves(user_id, status)")
@@ -244,7 +263,7 @@ def get_todays_roster():
             WHERE date = ?
             GROUP BY user_id
         ) a ON u.id = a.user_id
-        WHERE  u.role != 'Admin'
+        WHERE  u.role != 'Admin' AND (u.is_active = 1 OR u.is_active IS NULL)
         ORDER  BY u.department, u.username
     ''', (today,)).fetchall()
     conn.close()
@@ -321,7 +340,7 @@ def get_today_stats(conn=None):
         conn = get_db_connection()
         close_needed = True
 
-    total = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin'").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM users WHERE role != 'Admin' AND (is_active = 1 OR is_active IS NULL)").fetchone()[0]
 
     # Optimized single aggregation query for attendance stats
     row = conn.execute('''
@@ -541,6 +560,41 @@ def cleanup_old_backups():
         logger.error(f"Cleanup failed: {e}")
 
 
+_last_backup_check_date = None
+
+def check_daily_automated_backup():
+    """Ensure at least one automated daily backup exists for today (midnight snapshot)"""
+    global _last_backup_check_date
+    try:
+        today_date = ist_now().strftime('%Y%m%d')
+        if _last_backup_check_date == today_date:
+            return
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        existing = [f for f in os.listdir(BACKUP_DIR) if f.startswith(f'attendance_backup_{today_date}')]
+        if not existing:
+            bk = create_backup()
+            cleanup_old_backups()
+            if bk:
+                logger.info(f"Automated daily snapshot created: {bk}")
+        _last_backup_check_date = today_date
+    except Exception as e:
+        logger.error(f"Automated backup check failed: {e}")
+
+
+def _start_backup_scheduler():
+    def loop():
+        while True:
+            try:
+                check_daily_automated_backup()
+            except Exception:
+                pass
+            time.sleep(1800)  # Check every 30 minutes
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+
+_start_backup_scheduler()
+
+
 # ---------------------------------------------------------------------------
 # Cached Company Metadata & Context Processor
 # ---------------------------------------------------------------------------
@@ -568,6 +622,7 @@ def inject_globals():
     return dict(
         company_name=get_cached_company_name(),
         current_year=ist_now().year,
+        copyright_company="JCK software",
     )
 
 
@@ -668,6 +723,10 @@ def login():
         # Verify role matches login type
         expected_role = 'Admin' if login_type == 'admin' else 'Staff'
         if user and user['role'] == expected_role and check_password_hash(user['password'], password):
+            if user['role'] != 'Admin' and ('is_active' in user.keys() and user['is_active'] == 0):
+                flash('Access denied: Account has been deactivated/relieved. Please contact HR.')
+                return redirect(url_for('login'))
+
             if user['role'] != 'Admin' and user['department'] not in ALLOWED_DEPARTMENTS:
                 flash('Access denied: unauthorized department.')
                 return redirect(url_for('login'))
@@ -1081,7 +1140,11 @@ def admin_dashboard():
     today = today_str()
     conn  = get_db_connection()
     users = conn.execute(
-        "SELECT id, username, department, shift, weekoff, pl_quota FROM users WHERE role != 'Admin' ORDER BY department, username"
+        "SELECT id, username, department, shift, weekoff, pl_quota FROM users WHERE role != 'Admin' AND (is_active = 1 OR is_active IS NULL) ORDER BY department, username"
+    ).fetchall()
+
+    inactive_users = conn.execute(
+        "SELECT id, username, department, shift, weekoff, pl_quota FROM users WHERE role != 'Admin' AND is_active = 0 ORDER BY department, username"
     ).fetchall()
 
     try:
@@ -1126,7 +1189,7 @@ def admin_dashboard():
             WHERE date = ?
             GROUP BY user_id
         ) a ON u.id = a.user_id
-        WHERE u.role != 'Admin'
+        WHERE u.role != 'Admin' AND (u.is_active = 1 OR u.is_active IS NULL)
         ORDER BY u.department, u.username
     ''', (today,)).fetchall()
 
@@ -1136,6 +1199,7 @@ def admin_dashboard():
     return render_template(
         'admin.html',
         users=users,
+        inactive_users=inactive_users,
         pending_leaves=pending_leaves,
         recent_leaves=recent_leaves,
         warnings=warnings,
@@ -1279,9 +1343,19 @@ def admin_action():
             target = request.form.get('target_user', '').strip()
             user = conn.execute("SELECT id FROM users WHERE username=? AND role!='Admin'", (target,)).fetchone()
             if user:
-                conn.execute("DELETE FROM users WHERE id = ?", (user['id'],))
-                log_audit('USER_DELETED', target, session['user_id'], conn=conn)
-                flash(f"✅ Employee '{target}' removed.")
+                conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user['id'],))
+                log_audit('USER_DEACTIVATED', f"Deactivated '{target}' (historical records preserved)", session['user_id'], conn=conn)
+                flash(f"✅ Employee '{target}' deactivated. Historical attendance & leave records preserved.")
+            else:
+                flash("User not found.")
+
+        elif action_type == 'reactivate_user':
+            target = request.form.get('target_user', '').strip()
+            user = conn.execute("SELECT id FROM users WHERE username=? AND role!='Admin'", (target,)).fetchone()
+            if user:
+                conn.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user['id'],))
+                log_audit('USER_REACTIVATED', f"Reactivated '{target}'", session['user_id'], conn=conn)
+                flash(f"✅ Employee '{target}' reactivated successfully.")
             else:
                 flash("User not found.")
 
@@ -1719,6 +1793,53 @@ def api_status():
             "active_in_office_now": in_office,
         }
     })
+
+
+# ---------------------------------------------------------------------------
+# JCK Software B2B Product Presentation & Sales Page
+# ---------------------------------------------------------------------------
+@app.route('/sales')
+def sales_page():
+    """JCK Software B2B Product Presentation & Commercial Sales Page"""
+    return render_template(
+        'sales.html',
+        company_name=get_cached_company_name(),
+        copyright_company="JCK software"
+    )
+
+
+@app.route('/product')
+def product_redirect():
+    return redirect(url_for('sales_page'))
+
+
+@app.route('/sales/inquire', methods=['POST'])
+def sales_inquire():
+    name = request.form.get('name', '').strip()
+    email = request.form.get('email', '').strip()
+    phone = request.form.get('phone', '').strip()
+    company = request.form.get('company', '').strip()
+    team_size = request.form.get('team_size', '10-50')
+    message = request.form.get('message', '').strip()
+
+    if not name or not email:
+        flash("Please provide at least your Name and Email.", "warning")
+        return redirect(url_for('sales_page') + "#contact")
+
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO inquiries (name, email, phone, company, team_size, message, created_at) VALUES (?,?,?,?,?,?,?)",
+            (name, email, phone, company, team_size, message, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        conn.commit()
+        conn.close()
+        flash("🎉 Thank you! JCK software enterprise team will contact you within 24 hours.", "success")
+    except Exception as e:
+        logger.error(f"Inquiry error: {e}")
+        flash("Thank you for reaching out! We will contact you shortly.", "info")
+
+    return redirect(url_for('sales_page') + "#contact")
 
 
 # ---------------------------------------------------------------------------
