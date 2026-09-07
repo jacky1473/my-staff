@@ -199,7 +199,7 @@ def init_db():
     # High performance query indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role_dept ON users(role, department)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance(user_id, date)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_user_date_uniq ON attendance(user_id, date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leaves_user_status ON leaves(user_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(status)")
@@ -238,7 +238,12 @@ def get_todays_roster():
         SELECT u.username, u.department, u.shift, u.weekoff,
                a.clock_in, a.clock_out, a.status
         FROM   users u
-        LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
+        LEFT JOIN (
+            SELECT user_id, clock_in, clock_out, status
+            FROM attendance
+            WHERE date = ?
+            GROUP BY user_id
+        ) a ON u.id = a.user_id
         WHERE  u.role != 'Admin'
         ORDER  BY u.department, u.username
     ''', (today,)).fetchall()
@@ -537,21 +542,31 @@ def cleanup_old_backups():
 
 
 # ---------------------------------------------------------------------------
-# Context Processor
+# Cached Company Metadata & Context Processor
 # ---------------------------------------------------------------------------
-@app.context_processor
-def inject_globals():
-    company_name = "Enterprise"
+_cached_company_name = None
+_company_setup_verified = False
+
+def get_cached_company_name():
+    global _cached_company_name
+    if _cached_company_name:
+        return _cached_company_name
     try:
-        conn  = get_db_connection()
-        comp  = conn.execute("SELECT name FROM company LIMIT 1").fetchone()
+        conn = get_db_connection()
+        comp = conn.execute("SELECT name FROM company LIMIT 1").fetchone()
         conn.close()
-        if comp:
-            company_name = comp['name']
+        if comp and comp['name']:
+            _cached_company_name = comp['name']
+            return _cached_company_name
     except Exception:
         pass
+    return "Enterprise"
+
+
+@app.context_processor
+def inject_globals():
     return dict(
-        company_name=company_name,
+        company_name=get_cached_company_name(),
         current_year=ist_now().year,
     )
 
@@ -561,14 +576,18 @@ def inject_globals():
 # ---------------------------------------------------------------------------
 @app.before_request
 def check_setup():
+    global _company_setup_verified
+    if _company_setup_verified:
+        return
     if request.endpoint in ('setup', 'static', 'api_status'):
         return
     try:
         conn = get_db_connection()
-        comp = conn.execute("SELECT * FROM company").fetchone()
+        comp = conn.execute("SELECT id FROM company LIMIT 1").fetchone()
         conn.close()
         if not comp:
             return redirect(url_for('setup'))
+        _company_setup_verified = True
     except Exception:
         pass
 
@@ -611,6 +630,9 @@ def setup():
             )
         conn.commit()
         conn.close()
+        global _cached_company_name, _company_setup_verified
+        _cached_company_name = company_name
+        _company_setup_verified = True
         create_backup()  # Create first backup after setup
         flash("✅ System initialized! Welcome to your portal.")
         return redirect(url_for('login'))
@@ -723,8 +745,15 @@ def verify_pin():
         flash("Session expired. Please login again.")
         return redirect(url_for('login'))
     
-    _clear_attempts(username)
-    _clear_pin(username)
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM login_lockouts WHERE username = ?", (username,))
+        conn.execute("DELETE FROM login_pins WHERE username = ?", (username,))
+        log_audit('LOGIN_SUCCESS', f"Role: {pending.get('role')}", pending.get('user_id'), conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+
     del session['pending_login']
 
     session['user_id']    = pending.get('user_id')
@@ -732,7 +761,6 @@ def verify_pin():
     session['department'] = pending.get('department')
     session['role']       = pending.get('role')
 
-    log_audit('LOGIN_SUCCESS', f"Role: {pending.get('role')}", pending.get('user_id'))
     logger.info("Login successful: %s (%s)", username, pending.get('role'))
     flash("✅ Logged in successfully!", "success")
     return redirect(url_for('index'))
@@ -743,7 +771,14 @@ def logout():
     user_id = session.get('user_id')
     username = session.get('username')
     role = session.get('role')
-    log_audit('LOGOUT', f"Role: {role}", user_id)
+    if user_id:
+        try:
+            conn = get_db_connection()
+            log_audit('LOGOUT', f"Role: {role}", user_id, conn=conn)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Logout audit error: {e}")
     logger.info("Logout: %s", username)
     session.clear()
     flash("Logged out successfully.")
@@ -784,10 +819,10 @@ def forgot():
                     "UPDATE users SET password = ? WHERE username = ?",
                     (generate_password_hash(new_pass), username)
                 )
+                conn.execute("DELETE FROM login_lockouts WHERE username = ?", (username,))
+                log_audit('PASSWORD_RESET', f"Username: {username}", user['id'], conn=conn)
                 conn.commit()
                 conn.close()
-                _clear_attempts(username)
-                log_audit('PASSWORD_RESET', f"Username: {username}", user['id'])
                 flash("✅ Password reset successfully. You may now log in.")
                 return redirect(url_for('login'))
             else:
@@ -835,10 +870,7 @@ def optimize_response(response):
 @app.route('/workflow')
 def workflow():
     """Product workflow, operational guide & architecture tour"""
-    conn = get_db_connection()
-    company_row = conn.execute("SELECT name FROM company LIMIT 1").fetchone()
-    conn.close()
-    company_name = company_row['name'] if company_row else 'StaffPortal'
+    company_name = get_cached_company_name()
     return render_template('workflow.html', company_name=company_name)
 
 
@@ -973,15 +1005,17 @@ def apply_leave():
             return redirect(url_for('staff_dashboard'))
 
     conn = get_db_connection()
-    conn.execute(
-        '''INSERT INTO leaves (user_id, leave_type, start_date, end_date, days, reason, status, applied_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)''',
-        (user_id, leave_type, start_date, end_date, days_requested, reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            '''INSERT INTO leaves (user_id, leave_type, start_date, end_date, days, reason, status, applied_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)''',
+            (user_id, leave_type, start_date, end_date, days_requested, reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        log_audit('LEAVE_APPLIED', f"{leave_type}: {start_date} to {end_date} ({days_requested}d)", user_id, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
 
-    log_audit('LEAVE_APPLIED', f"{leave_type}: {start_date} to {end_date} ({days_requested}d)", user_id)
     flash(f"✅ Leave application submitted for {days_requested} day(s) ({leave_type}).")
     return redirect(url_for('staff_dashboard'))
 
@@ -998,34 +1032,40 @@ def clock():
     now_time = now.strftime('%H:%M:%S')
 
     conn   = get_db_connection()
-    record = conn.execute(
-        'SELECT * FROM attendance WHERE user_id = ? AND date = ?', (user_id, today)
-    ).fetchone()
+    try:
+        record = conn.execute(
+            'SELECT * FROM attendance WHERE user_id = ? AND date = ?', (user_id, today)
+        ).fetchone()
 
-    if action == 'in':
-        if not record:
-            conn.execute(
-                'INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?,?,?,?)',
-                (user_id, today, now_time, 'Present')
-            )
-            log_audit('CLOCK_IN', today, user_id)
-            flash(f'✅ Clocked in at {now_time}')
-        else:
-            flash('You have already clocked in today.')
-    elif action == 'out':
-        if record and not record['clock_out']:
-            tot_hrs = calculate_hours_worked(record['clock_in'], now_time)
-            conn.execute(
-                'UPDATE attendance SET clock_out = ?, total_hours = ? WHERE id = ?',
-                (now_time, tot_hrs, record['id'])
-            )
-            log_audit('CLOCK_OUT', today, user_id)
-            flash(f'👋 Clocked out at {now_time}. Work duration: {tot_hrs or ""}')
-        else:
-            flash('You must clock in first, or have already clocked out.')
+        if action == 'in':
+            if not record:
+                try:
+                    conn.execute(
+                        'INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?,?,?,?)',
+                        (user_id, today, now_time, 'Present')
+                    )
+                    log_audit('CLOCK_IN', today, user_id, conn=conn)
+                    conn.commit()
+                    flash(f'✅ Clocked in at {now_time}')
+                except sqlite3.IntegrityError:
+                    flash('You have already clocked in today.')
+            else:
+                flash('You have already clocked in today.')
+        elif action == 'out':
+            if record and not record['clock_out']:
+                tot_hrs = calculate_hours_worked(record['clock_in'], now_time)
+                conn.execute(
+                    'UPDATE attendance SET clock_out = ?, total_hours = ? WHERE id = ?',
+                    (now_time, tot_hrs, record['id'])
+                )
+                log_audit('CLOCK_OUT', today, user_id, conn=conn)
+                conn.commit()
+                flash(f'👋 Clocked out at {now_time}. Work duration: {tot_hrs or ""}')
+            else:
+                flash('You must clock in first, or have already clocked out.')
+    finally:
+        conn.close()
 
-    conn.commit()
-    conn.close()
     return redirect(url_for('staff_dashboard'))
 
 
@@ -1080,7 +1120,12 @@ def admin_dashboard():
         SELECT u.username, u.department, u.shift, u.weekoff,
                a.clock_in, a.clock_out, a.total_hours, a.status
         FROM users u
-        LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
+        LEFT JOIN (
+            SELECT user_id, clock_in, clock_out, total_hours, status
+            FROM attendance
+            WHERE date = ?
+            GROUP BY user_id
+        ) a ON u.id = a.user_id
         WHERE u.role != 'Admin'
         ORDER BY u.department, u.username
     ''', (today,)).fetchall()
@@ -1426,6 +1471,8 @@ def admin_action():
             else:
                 conn.execute("UPDATE company SET name=? WHERE id=1", (new_name,))
                 log_audit('COMPANY_UPDATED', new_name, session['user_id'], conn=conn)
+                global _cached_company_name
+                _cached_company_name = new_name
                 flash(f"✅ Company name updated.")
 
         conn.commit()
