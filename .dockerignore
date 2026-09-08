@@ -1,0 +1,16 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+venv/
+.venv/
+env/
+backups/
+*.log
+*.zip
+.env
+test_*.png
