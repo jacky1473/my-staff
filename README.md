@@ -16,6 +16,8 @@ Built for businesses, agencies, freelancers, and dev teams who need a reliable, 
 
 [🛒 **Get Full Source Code & Commercial License on Gumroad ($49)**](https://farman3.gumroad.com/l/vbvjcq)
 
+🤝 **[Become an Affiliate & Earn 40% Commission (0 / Sale)](https://farman3.gumroad.com/affiliates)**
+
 <br/>
 
 ![Cover Banner](docs/screenshots/0_gumroad_cover_banner.jpg)
