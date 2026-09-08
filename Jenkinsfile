@@ -47,15 +47,14 @@ pipeline {
                     """
 
                     // Stop and remove old container if running
-                    sh "docker stop ${appName} || true"
-                    sh "docker rm ${appName} || true"
+                    sh "docker rm -f ${appName} || true"
 
                     // Start new container with persistent database mount
                     sh """
                         docker run -d \\
                             --name ${appName} \\
                             -p ${appPort}:${appPort} \\
-                            -v /data:/data \\
+                            -v /data:/data:z \\
                             -e PORT=${appPort} \\
                             -e DB_PATH=${dbPath} \\
                             -e SECRET_KEY="${SECRET_KEY}" \\
