@@ -19,7 +19,7 @@ RUN mkdir -p /data /app/backups
 EXPOSE 5000 5001
 
 ENV PORT=5000
-ENV SECRET_KEY=c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c
+ENV SECRET_KEY=change-this-to-a-secure-secret-key
 ENV FLASK_DEBUG=false
 ENV PYTHONUNBUFFERED=1
 
