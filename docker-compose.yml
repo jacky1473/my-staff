@@ -1,0 +1,49 @@
+services:
+  attendance-app:
+    container_name: attendance-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: attendance-app:latest
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - DB_PATH=/data/attendance.db
+      - SECRET_KEY=c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c
+      - FLASK_DEBUG=false
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - /data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  attendance-app-staging:
+    container_name: attendance-app-staging
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: attendance-app-staging:latest
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      - PORT=5001
+      - DB_PATH=/data/attendance_staging.db
+      - SECRET_KEY=c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c
+      - FLASK_DEBUG=false
+      - PYTHONUNBUFFERED=1
+      - ENV_NAME=staging
+    volumes:
+      - /data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

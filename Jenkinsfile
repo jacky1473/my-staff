@@ -20,31 +20,49 @@ pipeline {
             }
         }
 
-        stage('Deploy with PM2') {
+        stage('Deploy with Docker') {
             steps {
                 script {
                     def isStaging = (env.GIT_BRANCH?.contains('staging') || env.JOB_NAME?.contains('staging'))
-                    def appName = isStaging ? 'attendance-app-staging' : 'attendance-app'
-                    def appPort = isStaging ? '5001' : '5000'
-                    def dbPath  = isStaging ? '/data/attendance_staging.db' : '/data/attendance.db'
-                    def configFile = isStaging ? 'ecosystem-staging.config.js' : 'ecosystem.config.js'
+                    def appName   = isStaging ? 'attendance-app-staging' : 'attendance-app'
+                    def appPort   = isStaging ? '5001' : '5000'
+                    def dbPath    = isStaging ? '/data/attendance_staging.db' : '/data/attendance.db'
+                    def imageName = isStaging ? 'attendance-app-staging:latest' : 'attendance-app:latest'
 
-                    echo ">>> [DEPLOY] Deploying ${appName} on Port ${appPort} using ${configFile}..."
+                    echo ">>> [BUILD] Building Docker image ${imageName}..."
+                    sh "docker build -t ${imageName} ."
+
+                    echo ">>> [DEPLOY] Deploying ${appName} on Port ${appPort} via Docker..."
 
                     // Ensure database exists
                     sh """
                         if [ ! -f "${dbPath}" ]; then
-                            cp /data/attendance.db "${dbPath}" || true
+                            if [ -f /data/attendance.db ]; then
+                                cp /data/attendance.db "${dbPath}" || true
+                            else
+                                touch "${dbPath}" || true
+                            fi
                             chmod 666 "${dbPath}" || true
                         fi
                     """
 
-                    // Deploy specific target in PM2 without killing other instances
+                    // Stop and remove old container if running
+                    sh "docker stop ${appName} || true"
+                    sh "docker rm ${appName} || true"
+
+                    // Start new container with persistent database mount
                     sh """
-                        export JENKINS_NODE_COOKIE=dontKillMe
-                        pm2 delete ${appName} || true
-                        pm2 start ${configFile}
-                        pm2 save || true
+                        docker run -d \\
+                            --name ${appName} \\
+                            -p ${appPort}:${appPort} \\
+                            -v /data:/data \\
+                            -e PORT=${appPort} \\
+                            -e DB_PATH=${dbPath} \\
+                            -e SECRET_KEY="${SECRET_KEY}" \\
+                            -e FLASK_DEBUG=false \\
+                            -e PYTHONUNBUFFERED=1 \\
+                            --restart unless-stopped \\
+                            ${imageName}
                     """
                 }
             }
@@ -57,7 +75,7 @@ pipeline {
                     def appPort = isStaging ? '5001' : '5000'
 
                     echo ">>> [TEST] Running Selenium UI tests against http://127.0.0.1:${appPort}..."
-                    sh 'sleep 4'
+                    sh 'sleep 6'
                     sh "APP_URL='http://127.0.0.1:${appPort}' python3 test_login.py"
                 }
             }
@@ -66,7 +84,7 @@ pipeline {
 
     post {
         success {
-            echo '✅ Deployment with PM2 and UI testing completed successfully!'
+            echo '✅ Deployment with Docker and UI testing completed successfully!'
         }
         failure {
             echo '❌ Pipeline failed! Check the logs.'
