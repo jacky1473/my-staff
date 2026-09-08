@@ -829,18 +829,6 @@ def optimize_response(response):
     return response
 
 
-# ---------------------------------------------------------------------------
-# Product Workflow & Interactive Guide
-# ---------------------------------------------------------------------------
-@app.route('/workflow')
-def workflow():
-    """Product workflow, operational guide & architecture tour"""
-    conn = get_db_connection()
-    company_row = conn.execute("SELECT name FROM company LIMIT 1").fetchone()
-    conn.close()
-    company_name = company_row['name'] if company_row else 'StaffPortal'
-    return render_template('workflow.html', company_name=company_name)
-
 
 # ---------------------------------------------------------------------------
 # Index & Routing
