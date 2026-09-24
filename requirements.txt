@@ -4,3 +4,4 @@ openpyxl==3.1.2
 werkzeug==3.0.1
 pytz==2024.1
 gunicorn==23.0.0
+selenium>=4.20.0

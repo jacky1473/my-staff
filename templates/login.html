@@ -76,33 +76,34 @@
 {% endblock %}
 
 {% block body %}
+{% set is_admin = (active_panel == 'admin') %}
 <div class="login-wrapper">
   
   <!-- Toggle Switch -->
   <div class="login-toggle">
-    <button class="toggle-btn active" data-panel="staff" onclick="switchPanel('staff')">
+    <button class="toggle-btn {% if not is_admin %}active{% endif %}" data-panel="staff" onclick="switchPanel('staff')">
       👤 Staff Login
     </button>
-    <button class="toggle-btn" data-panel="admin" onclick="switchPanel('admin')">
+    <button class="toggle-btn {% if is_admin %}active{% endif %}" data-panel="admin" onclick="switchPanel('admin')">
       👨‍💼 Admin Login
     </button>
   </div>
 
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      {% for msg in messages %}
+        <div class="flash-alert alert alert-danger" role="alert">{{ msg }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
   <!-- STAFF LOGIN PANEL -->
-  <div id="staff" class="login-panel active glass-card login-card">
+  <div id="staff" class="login-panel {% if not is_admin %}active{% endif %} glass-card login-card">
     <div class="text-center mb-2">
       <div class="icon-box">👤</div>
       <h1 class="page-title">{{ company_name }}</h1>
       <p class="page-subtitle">Staff Portal</p>
     </div>
-
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        {% for msg in messages %}
-          <div class="flash-alert alert alert-danger" role="alert">{{ msg }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
 
     <form method="POST" class="mt-3" novalidate>
       <input type="hidden" name="login_type" value="staff">
@@ -140,7 +141,7 @@
   </div>
 
   <!-- ADMIN LOGIN PANEL -->
-  <div id="admin" class="login-panel glass-card login-card">
+  <div id="admin" class="login-panel {% if is_admin %}active{% endif %} glass-card login-card">
     <div class="text-center mb-2">
       <div class="icon-box">👨‍💼</div>
       <h1 class="page-title">{{ company_name }}</h1>

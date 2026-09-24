@@ -17,6 +17,7 @@ for env_var in ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY"):
     os.environ.pop(env_var, None)
 
 from selenium import webdriver
+from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -77,7 +78,8 @@ def setup_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1280,800")
-    driver = webdriver.Firefox(options=options)
+    service = Service(service_args=["--allow-hosts", "localhost", "127.0.0.1", "main"])
+    driver = webdriver.Firefox(options=options, service=service)
     driver.implicitly_wait(5)
     return driver
 

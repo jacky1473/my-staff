@@ -345,7 +345,7 @@ def get_today_stats(conn=None):
     # Optimized single aggregation query for attendance stats
     row = conn.execute('''
         SELECT 
-            SUM(CASE WHEN clock_in IS NOT NULL THEN 1 ELSE 0 END) AS present,
+            SUM(CASE WHEN (clock_in IS NOT NULL OR status = 'Present') AND (status NOT IN ('Absent', 'Leave', 'PL', 'UL', 'LWP') OR status IS NULL) THEN 1 ELSE 0 END) AS present,
             SUM(CASE WHEN status = 'Absent' THEN 1 ELSE 0 END) AS absent,
             SUM(CASE WHEN status = 'PL' THEN 1 ELSE 0 END) AS pl_count,
             SUM(CASE WHEN status = 'UL' THEN 1 ELSE 0 END) AS ul_count,
@@ -542,6 +542,13 @@ def restore_backup(backup_file):
     """Restore from backup"""
     try:
         shutil.copy2(backup_file, DB_PATH)
+        for ext in ('-wal', '-shm'):
+            wal_file = f"{DB_PATH}{ext}"
+            if os.path.exists(wal_file):
+                try:
+                    os.remove(wal_file)
+                except Exception:
+                    pass
         logger.info(f"Database restored from {backup_file}")
         return True
     except Exception as e:
@@ -714,7 +721,7 @@ def login():
         if locked:
             mins = secs // 60 + 1
             flash(f"Account locked. Try again in {mins} minute(s).")
-            return render_template('login.html')
+            return render_template('login.html', active_panel=login_type)
 
         conn = get_db_connection()
         user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
@@ -725,11 +732,11 @@ def login():
         if user and user['role'] == expected_role and check_password_hash(user['password'], password):
             if user['role'] != 'Admin' and ('is_active' in user.keys() and user['is_active'] == 0):
                 flash('Access denied: Account has been deactivated/relieved. Please contact HR.')
-                return redirect(url_for('login'))
+                return render_template('login.html', active_panel=login_type)
 
             if user['role'] != 'Admin' and user['department'] not in ALLOWED_DEPARTMENTS:
                 flash('Access denied: unauthorized department.')
-                return redirect(url_for('login'))
+                return render_template('login.html', active_panel=login_type)
 
             # Generate PIN (4 digits, NO email needed!)
             pin = generate_pin()
@@ -757,8 +764,9 @@ def login():
                 count = row['attempts'] if row else 1
                 remaining = max(0, MAX_ATTEMPTS - count)
                 flash(f"Invalid credentials. {remaining} attempt(s) left.")
+            return render_template('login.html', active_panel=login_type)
 
-    return render_template('login.html')
+    return render_template('login.html', active_panel=request.args.get('panel', 'staff'))
 
 
 @app.route('/verify-pin', methods=['POST'])
@@ -1108,10 +1116,19 @@ def clock():
                     flash(f'✅ Clocked in at {now_time}')
                 except sqlite3.IntegrityError:
                     flash('You have already clocked in today.')
+            elif not record['clock_in']:
+                new_status = 'Present' if (record['status'] in ('Absent', None) or not record['status']) else record['status']
+                conn.execute(
+                    'UPDATE attendance SET clock_in = ?, status = ? WHERE id = ?',
+                    (now_time, new_status, record['id'])
+                )
+                log_audit('CLOCK_IN', today, user_id, conn=conn)
+                conn.commit()
+                flash(f'✅ Clocked in at {now_time}')
             else:
                 flash('You have already clocked in today.')
         elif action == 'out':
-            if record and not record['clock_out']:
+            if record and record['clock_in'] and not record['clock_out']:
                 tot_hrs = calculate_hours_worked(record['clock_in'], now_time)
                 conn.execute(
                     'UPDATE attendance SET clock_out = ?, total_hours = ? WHERE id = ?',
@@ -1222,9 +1239,9 @@ def admin_analytics():
         SELECT
             a.date,
             COUNT(DISTINCT a.user_id) AS total_marked,
-            SUM(CASE WHEN a.clock_in IS NOT NULL THEN 1 ELSE 0 END) AS present,
+            SUM(CASE WHEN (a.clock_in IS NOT NULL OR a.status = 'Present') AND (a.status NOT IN ('Absent', 'Leave', 'PL', 'UL', 'LWP') OR a.status IS NULL) THEN 1 ELSE 0 END) AS present,
             SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) AS absent,
-            SUM(CASE WHEN a.status = 'Leave' THEN 1 ELSE 0 END) AS on_leave
+            SUM(CASE WHEN a.status IN ('Leave', 'PL', 'UL', 'LWP') THEN 1 ELSE 0 END) AS on_leave
         FROM attendance a
         WHERE a.date >= date('now', '-30 days')
         GROUP BY a.date
@@ -1235,9 +1252,9 @@ def admin_analytics():
         SELECT
             u.username, u.department,
             COUNT(a.id) AS total_days,
-            SUM(CASE WHEN a.clock_in IS NOT NULL THEN 1 ELSE 0 END) AS present_days,
+            SUM(CASE WHEN (a.clock_in IS NOT NULL OR a.status = 'Present') AND (a.status NOT IN ('Absent', 'Leave', 'PL', 'UL', 'LWP') OR a.status IS NULL) THEN 1 ELSE 0 END) AS present_days,
             SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) AS absent_days,
-            SUM(CASE WHEN a.status = 'Leave' THEN 1 ELSE 0 END) AS leave_days
+            SUM(CASE WHEN a.status IN ('Leave', 'PL', 'UL', 'LWP') THEN 1 ELSE 0 END) AS leave_days
         FROM users u
         LEFT JOIN attendance a ON u.id = a.user_id AND a.date >= date('now', '-30 days')
         WHERE u.role != 'Admin'
@@ -1403,17 +1420,22 @@ def admin_action():
                 flash("Invalid status.")
             else:
                 today = today_str()
+                now_time = ist_now().strftime('%H:%M:%S')
                 user  = conn.execute('SELECT id FROM users WHERE username=?', (target,)).fetchone()
                 if user:
                     record = conn.execute(
-                        'SELECT id FROM attendance WHERE user_id=? AND date=?', (user['id'], today)
+                        'SELECT id, clock_in FROM attendance WHERE user_id=? AND date=?', (user['id'], today)
                     ).fetchone()
                     if record:
-                        conn.execute('UPDATE attendance SET status=? WHERE id=?', (status, record['id']))
+                        if status == 'Present' and not record['clock_in']:
+                            conn.execute('UPDATE attendance SET status=?, clock_in=? WHERE id=?', (status, now_time, record['id']))
+                        else:
+                            conn.execute('UPDATE attendance SET status=? WHERE id=?', (status, record['id']))
                     else:
+                        clk_in = now_time if status == 'Present' else None
                         conn.execute(
-                            'INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)',
-                            (user['id'], today, status)
+                            'INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?,?,?,?)',
+                            (user['id'], today, clk_in, status)
                         )
                     log_audit('STATUS_MARKED', f"{target}: {status}", session['user_id'], conn=conn)
                     flash(f"✅ '{target}' marked as {status}.")
@@ -1733,7 +1755,7 @@ def export_excel(report_type):
     conn = get_db_connection()
     df   = pd.read_sql_query('''
         SELECT u.username, u.department, u.shift, u.weekoff,
-               a.date, a.clock_in, a.clock_out, a.status
+               a.date, a.clock_in, a.clock_out, a.total_hours, a.status
         FROM   attendance a
         JOIN   users u ON a.user_id = u.id
         ORDER  BY a.date DESC
@@ -1745,11 +1767,11 @@ def export_excel(report_type):
         return redirect(url_for('admin_dashboard'))
 
     df['date'] = pd.to_datetime(df['date'])
-    now = datetime.now()
+    today_start = pd.Timestamp(ist_now().date())
     if report_type == 'weekly':
-        df = df[df['date'] >= (now - timedelta(days=7))]
+        df = df[df['date'] >= (today_start - timedelta(days=7))]
     elif report_type == 'monthly':
-        df = df[df['date'] >= (now - timedelta(days=30))]
+        df = df[df['date'] >= (today_start - timedelta(days=30))]
 
     if target_user != 'All':
         df = df[df['username'] == target_user]

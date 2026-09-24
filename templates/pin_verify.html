@@ -116,7 +116,7 @@
     timerEl.textContent = `⏱️ Expires in ${mins}:${String(secs).padStart(2, '0')}`;
     
     if (timeLeft <= 0) {
-      timerEl.classList.add('pin-timer.critical');
+      timerEl.classList.add('critical');
       timerEl.textContent = '⏰ PIN Expired! Go back to login.';
       document.querySelector('button').disabled = true;
       document.querySelector('input[name="pin"]').disabled = true;

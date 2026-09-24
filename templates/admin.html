@@ -425,12 +425,12 @@
                     <span class="leave-type-badge badge-pl">PL</span>
                   {% elif row.status == 'Absent' %}
                     <span class="badge badge-status status-absent">Absent</span>
-                  {% elif row.weekoff == today_day and not row.clock_in %}
-                    <span class="badge bg-secondary">Week Off</span>
                   {% elif row.clock_in and row.clock_out %}
                     <span class="badge bg-secondary">Completed</span>
-                  {% elif row.clock_in and not row.clock_out %}
+                  {% elif row.status == 'Present' or (row.clock_in and not row.clock_out) %}
                     <span class="badge badge-status status-online">Present</span>
+                  {% elif row.weekoff == today_day and not row.clock_in %}
+                    <span class="badge bg-secondary">Week Off</span>
                   {% else %}
                     <span class="badge bg-secondary opacity-50">Not Arrived</span>
                   {% endif %}
