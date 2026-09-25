@@ -67,7 +67,12 @@
         <div class="warning-card">
           <div class="d-flex justify-content-between align-items-center mb-1">
             <strong style="color: var(--danger);">🚨 {{ n.title }}</strong>
-            <small class="text-muted">{{ n.created_at[:16] }}</small>
+            <div>
+              {% if n.expires_at %}
+              <small class="badge bg-warning text-dark me-1" style="font-size: 0.7rem;">⏳ Valid till {{ n.expires_at[:16] }}</small>
+              {% endif %}
+              <small class="text-muted">{{ n.created_at[:16] }}</small>
+            </div>
           </div>
           <div style="font-size: 0.9rem;">{{ n.message }}</div>
         </div>
@@ -75,7 +80,12 @@
         <div class="notice-card">
           <div class="d-flex justify-content-between align-items-center mb-1">
             <strong style="color: var(--accent-cyan);">📢 {{ n.title }}</strong>
-            <small class="text-muted">{{ n.created_at[:16] }}</small>
+            <div>
+              {% if n.expires_at %}
+              <small class="badge bg-warning text-dark me-1" style="font-size: 0.7rem;">⏳ Valid till {{ n.expires_at[:16] }}</small>
+              {% endif %}
+              <small class="text-muted">{{ n.created_at[:16] }}</small>
+            </div>
           </div>
           <div style="font-size: 0.9rem;">{{ n.message }}</div>
         </div>

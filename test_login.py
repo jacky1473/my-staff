@@ -189,30 +189,39 @@ def test_login_flow():
         if is_pin_screen:
             print("[INFO] Reached 2FA PIN verification screen.")
             pin = None
-            pin_elems = driver.find_elements(By.CLASS_NAME, "pin-code")
-            if pin_elems and pin_elems[0].text.strip().isdigit():
-                pin = pin_elems[0].text.strip()
 
-            if not pin:
-                try:
-                    your_pin_lbl = driver.find_element(By.XPATH, "//*[contains(text(), 'Your PIN')]")
-                    container = your_pin_lbl.find_element(By.XPATH, "..")
-                    for child in container.find_elements(By.XPATH, "./*"):
-                        txt = child.text.strip().replace(" ", "")
-                        if len(txt) == 4 and txt.isdigit():
-                            pin = txt
+            # 1. Automated headless test: fetch active OTP directly from SQLite login_pins table
+            try:
+                import sqlite3
+                candidate_dbs = [
+                    os.environ.get("DB_PATH", ""),
+                    "/data/attendance_staging.db",
+                    "/data/attendance.db",
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "attendance.db")
+                ]
+                for db_path in candidate_dbs:
+                    if db_path and os.path.exists(db_path):
+                        c_conn = sqlite3.connect(db_path)
+                        c_cur = c_conn.cursor()
+                        row = c_cur.execute(
+                            "SELECT pin FROM login_pins WHERE username = ? ORDER BY expires DESC LIMIT 1",
+                            (ADMIN_USER,)
+                        ).fetchone()
+                        c_conn.close()
+                        if row and row[0]:
+                            pin = str(row[0]).strip()
+                            print(f"[INFO] Successfully retrieved active OTP from test database ({db_path}): {pin}")
                             break
-                except Exception:
-                    pass
+            except Exception as db_err:
+                print(f"[WARN] Database PIN fetch failed: {db_err}")
 
+            # 2. Fallback: check on-screen elements if present
             if not pin:
-                matches = re.findall(r'\b\d{4}\b', driver.page_source)
-                for m in matches:
-                    if m not in ("2024", "2025", "2026", "0000"):
-                        pin = m
-                        break
+                pin_elems = driver.find_elements(By.CLASS_NAME, "pin-code")
+                if pin_elems and pin_elems[0].text.strip().isdigit():
+                    pin = pin_elems[0].text.strip()
 
-            print(f"[INFO] Detected 2FA PIN: {pin}")
+            print(f"[INFO] Detected 2FA PIN/OTP: {pin}")
             assert pin and len(pin) == 4 and pin.isdigit(), f"Failed to extract valid 4-digit PIN, got: {pin}"
 
             pin_input = wait.until(EC.presence_of_element_located((By.NAME, "pin")))

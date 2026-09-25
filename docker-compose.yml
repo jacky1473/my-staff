@@ -14,6 +14,13 @@ services:
       - SECRET_KEY=c12c129751a2f548895bbbc518289aef93a56b6125d44965a84ea5c90dcdac0c
       - FLASK_DEBUG=false
       - PYTHONUNBUFFERED=1
+      - DEFAULT_TEST_EMAIL=ahmedfarman102@gmail.com
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_TLS=${SMTP_TLS:-true}
     volumes:
       - /data:/data
     healthcheck:
@@ -39,6 +46,13 @@ services:
       - FLASK_DEBUG=false
       - PYTHONUNBUFFERED=1
       - ENV_NAME=staging
+      - DEFAULT_TEST_EMAIL=ahmedfarman102@gmail.com
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_TLS=${SMTP_TLS:-true}
     volumes:
       - /data:/data
     healthcheck:

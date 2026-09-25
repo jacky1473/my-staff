@@ -11,9 +11,10 @@
   .pin-icon { font-size: 3rem; margin-bottom: 1rem; animation: bounce 2s infinite; }
   @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
   
-  .pin-display-box { background: linear-gradient(135deg, rgba(0,217,255,0.2), rgba(57,255,20,0.1)); border: 2px solid var(--accent-cyan); border-radius: 0.75rem; padding: 1.5rem; margin: 1.5rem 0; }
-  .pin-code { font-size: 2.5rem; font-weight: 800; letter-spacing: 8px; color: var(--accent-cyan); font-family: 'Monaco', monospace; }
-  .pin-label { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem; text-transform: uppercase; }
+  .pin-sent-box { background: rgba(0, 217, 255, 0.08); border: 1.5px dashed var(--accent-cyan); border-radius: 0.75rem; padding: 1.25rem 1rem; margin: 1.25rem 0; text-align: center; }
+  .pin-sent-title { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; color: var(--accent-cyan); letter-spacing: 1px; margin-bottom: 0.4rem; }
+  .pin-sent-email { font-size: 1.2rem; font-weight: 700; color: #ffffff; letter-spacing: 0.5px; font-family: 'Monaco', monospace; }
+  .pin-sent-desc { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.4rem; margin-bottom: 0; }
   
   .pin-input { width: 100%; font-size: 32px; letter-spacing: 10px; text-align: center; }
   
@@ -45,18 +46,18 @@
       {% endif %}
     {% endwith %}
 
-    <!-- PIN Display -->
-    <div class="pin-display-box">
-      <div class="pin-label">Your PIN (shown on this screen)</div>
-      <div class="pin-code">{{ pin_display }}</div>
-      <div class="pin-label">⚠️ PIN visible only here for security</div>
+    <!-- Email OTP Sent Box (No PIN shown on screen) -->
+    <div class="pin-sent-box">
+      <div class="pin-sent-title">✉️ Verification Code Sent</div>
+      <div class="pin-sent-email">{{ masked_email or 'Your Registered Email' }}</div>
+      <p class="pin-sent-desc">Please check your inbox (or spam) and enter the 4-digit code below.</p>
     </div>
 
     <!-- Enter PIN Form -->
     <form method="POST" action="/verify-pin" class="mt-2" novalidate>
       <input type="hidden" name="username" value="{{ username }}">
       
-      <label class="section-label">Enter PIN in field below</label>
+      <label class="section-label">Enter 4-Digit Code</label>
       <input type="text"
              name="pin"
              class="form-control pin-input"
@@ -69,25 +70,25 @@
       
       <div class="pin-timer" id="timer">⏱️ Expires in 3:00</div>
 
-      <button type="submit" class="btn btn-primary-glow w-100 mt-2">Verify PIN</button>
+      <button type="submit" class="btn btn-primary-glow w-100 mt-2">Verify & Login</button>
     </form>
 
     <!-- Instructions -->
     <div class="pin-notes">
-      <strong>🔐 Security Notes:</strong>
+      <strong>🔐 Security Instructions:</strong>
       <ul style="padding-left: 1.5rem; margin: 0;">
-        <li>PIN is displayed only once on this page</li>
-        <li>Do not share your PIN with anyone</li>
-        <li>PIN expires in 3 minutes for security</li>
-        <li>Each login requires a new PIN</li>
+        <li>Check your email inbox and spam folder</li>
+        <li>The code will expire in 3 minutes</li>
+        <li>Do not share your verification code with anyone</li>
+        <li>Each login requires a newly issued OTP</li>
       </ul>
     </div>
 
     <hr class="bg-secondary opacity-25 my-3">
-    <p class="text-muted small">
-      Account: <strong>{{ username }}</strong><br>
-      Role: <strong>{{ login_type | upper }}</strong>
-    </p>
+    <div class="d-flex justify-content-between align-items-center">
+      <small class="text-muted">User: <strong>{{ username }}</strong> ({{ login_type | upper }})</small>
+      <a href="/login?panel={{ login_type }}" class="small text-info text-decoration-none">← Back to Login</a>
+    </div>
   </div>
 </div>
 

@@ -7,6 +7,9 @@ import string
 import io
 import csv
 import gzip
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify, Response
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -24,6 +27,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-please'
 
 DB_PATH = os.environ.get('DB_PATH') or ('/data/attendance.db' if os.path.exists('/data') else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'attendance.db'))
 BACKUP_DIR = os.environ.get('BACKUP_DIR', './backups')
+DEFAULT_TEST_EMAIL = os.environ.get('DEFAULT_TEST_EMAIL', 'ahmedfarman102@gmail.com')
 
 # Ensure backup directory exists
 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -78,6 +82,7 @@ def init_db():
         password          TEXT NOT NULL,
         department        TEXT NOT NULL,
         role              TEXT NOT NULL,
+        email             TEXT,
         shift             TEXT DEFAULT '09:00 AM - 06:00 PM',
         weekoff           TEXT DEFAULT 'Sunday',
         security_question TEXT DEFAULT 'What is your favorite color?',
@@ -179,12 +184,15 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What is your favorite color?'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'blue'")
     _safe_alter(conn, "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN email TEXT")
+    _safe_alter(conn, "ALTER TABLE notifications ADD COLUMN expires_at TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_by TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_at TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN admin_remark TEXT")
 
-    # Ensure existing users default to active
+    # Ensure existing users default to active and admin has test email if empty
     conn.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
+    conn.execute("UPDATE users SET email = ? WHERE (email IS NULL OR email = '') AND role = 'Admin'", (DEFAULT_TEST_EMAIL,))
 
     # Tables for multi-worker concurrency (PIN auth & brute force lockout)
     conn.execute('''CREATE TABLE IF NOT EXISTS login_pins (
@@ -384,11 +392,94 @@ def get_today_stats(conn=None):
 
 
 # ---------------------------------------------------------------------------
-# PIN Generation & Verification (NO EMAIL NEEDED!)
+# OTP Generation & Email Delivery System
 # ---------------------------------------------------------------------------
 def generate_pin():
-    """Generate 4-digit PIN"""
+    """Generate 4-digit PIN/OTP"""
     return ''.join(random.choices(string.digits, k=4))
+
+
+def mask_email(email_str):
+    """Mask email for privacy/security display e.g. ah***@gmail.com"""
+    if not email_str or '@' not in email_str:
+        return "your registered email"
+    user, domain = email_str.split('@', 1)
+    if len(user) <= 2:
+        masked_user = user[0] + "***"
+    else:
+        masked_user = user[:2] + "***" + user[-1]
+    return f"{masked_user}@{domain}"
+
+
+def send_email_otp(recipient_email, otp_code, username=None, company_name="Attendance Portal"):
+    """Send 4-digit OTP to user's registered email via SMTP.
+    Configurable via environment variables (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TLS).
+    Falls back to DEFAULT_TEST_EMAIL (ahmedfarman102@gmail.com) if no user email provided.
+    """
+    target_email = recipient_email.strip() if recipient_email and '@' in recipient_email else DEFAULT_TEST_EMAIL
+    
+    smtp_host = os.environ.get('SMTP_HOST', '').strip()
+    smtp_port = int(os.environ.get('SMTP_PORT', '587').strip() or 587)
+    smtp_user = os.environ.get('SMTP_USER', '').strip()
+    smtp_pass = os.environ.get('SMTP_PASS', '').strip()
+    smtp_from = os.environ.get('SMTP_FROM', '').strip() or smtp_user or f"noreply@{smtp_host or 'mystaff.local'}"
+    use_tls = os.environ.get('SMTP_TLS', 'true').strip().lower() in ('true', '1', 'yes')
+
+    subject = f"🔐 Your Login Verification Code: {otp_code} — {company_name}"
+    
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 25px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #0d6efd; margin: 0;">{company_name}</h2>
+            <p style="color: #6c757d; font-size: 14px; margin-top: 5px;">Staff Attendance & HR Portal</p>
+        </div>
+        <p style="font-size: 15px; color: #333;">Hello <strong>{username or 'User'}</strong>,</p>
+        <p style="font-size: 14px; color: #555;">Use the one-time verification code (OTP) below to complete your login:</p>
+        <div style="text-align: center; margin: 25px 0;">
+            <span style="font-size: 34px; font-weight: 800; letter-spacing: 8px; padding: 12px 28px; background: #f0fdf4; border: 2px dashed #22c55e; color: #15803d; border-radius: 8px; display: inline-block;">
+                {otp_code}
+            </span>
+        </div>
+        <p style="color: #dc2626; font-size: 13px; text-align: center; font-weight: 600;">
+            ⏱️ This OTP will expire in {PIN_EXPIRY_MINUTES} minutes.
+        </p>
+        <hr style="border: none; border-top: 1px solid #eeeeee; margin: 25px 0;">
+        <p style="color: #9ca3af; font-size: 12px; text-align: center; margin: 0;">
+            If you did not attempt to log in, please alert your IT Administrator immediately.
+        </p>
+    </div>
+    """
+    text_body = f"Hello {username or 'User'},\n\nYour {company_name} login OTP is: {otp_code}\nThis code expires in {PIN_EXPIRY_MINUTES} minutes.\n\nDo not share this code with anyone."
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = smtp_from
+    msg["To"] = target_email
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    if not smtp_host:
+        logger.info(f"[EMAIL_OTP] SMTP not configured. OTP generated for {target_email}: {otp_code}")
+        return True, f"OTP dispatched for {target_email}"
+
+    try:
+        if smtp_port == 465:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+            if use_tls:
+                server.starttls()
+        
+        if smtp_user and smtp_pass:
+            server.login(smtp_user, smtp_pass)
+        
+        server.sendmail(smtp_from, [target_email], msg.as_string())
+        server.quit()
+        logger.info(f"[EMAIL_OTP] Successfully sent OTP email to {target_email}")
+        return True, f"OTP sent to {target_email}"
+    except Exception as e:
+        logger.error(f"[EMAIL_OTP] Failed to deliver OTP email to {target_email}: {e}")
+        return False, f"Failed to send email: {e}"
 
 
 def log_audit(action, details=None, user_id=None, conn=None):
@@ -677,18 +768,19 @@ def setup():
             conn.close()
             return render_template('setup.html')
 
+        admin_email  = request.form.get('admin_email', '').strip() or DEFAULT_TEST_EMAIL
         hashed = generate_password_hash(admin_pass)
         conn.execute("INSERT INTO company (name) VALUES (?)", (company_name,))
         existing_admin = conn.execute("SELECT id FROM users WHERE role='Admin'").fetchone()
         if existing_admin:
             conn.execute(
-                "UPDATE users SET username=?, password=?, security_question=?, security_answer=? WHERE id=?",
-                (admin_user, hashed, sec_q, sec_a, existing_admin['id'])
+                "UPDATE users SET username=?, password=?, email=?, security_question=?, security_answer=? WHERE id=?",
+                (admin_user, hashed, admin_email, sec_q, sec_a, existing_admin['id'])
             )
         else:
             conn.execute(
-                "INSERT INTO users (username, password, department, role, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?)",
-                (admin_user, hashed, 'Management', 'Admin', 'Flexible', 'Sunday', sec_q, sec_a)
+                "INSERT INTO users (username, password, department, role, email, shift, weekoff, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
+                (admin_user, hashed, 'Management', 'Admin', admin_email, 'Flexible', 'Sunday', sec_q, sec_a)
             )
         conn.commit()
         conn.close()
@@ -738,20 +830,33 @@ def login():
                 flash('Access denied: unauthorized department.')
                 return render_template('login.html', active_panel=login_type)
 
-            # Generate PIN (4 digits, NO email needed!)
+            # Generate PIN (4-digit OTP)
             pin = generate_pin()
             _store_pin(username, pin, expected_role, user['id'], user['department'])
+
+            # Determine recipient email
+            user_email = user['email'] if 'email' in user.keys() and user['email'] else ''
+            target_email = user_email.strip() if user_email and '@' in user_email else DEFAULT_TEST_EMAIL
+            masked_email_str = mask_email(target_email)
 
             # Store in session for verification page
             session['pending_login'] = {
                 'username': username,
                 'role': expected_role,
                 'user_id': user['id'],
-                'department': user['department']
+                'department': user['department'],
+                'masked_email': masked_email_str,
+                'target_email': target_email
             }
 
-            flash(f"✅ Your PIN is: {pin}", "success")
-            return render_template('pin_verify.html', username=username, pin_display=pin, login_type=login_type)
+            company_name = get_cached_company_name()
+            sent_ok, send_msg = send_email_otp(target_email, pin, username=username, company_name=company_name)
+            if sent_ok:
+                flash(f"📧 4-digit verification code sent to {masked_email_str}.", "info")
+            else:
+                flash(f"⚠️ {send_msg}", "warning")
+
+            return render_template('pin_verify.html', username=username, masked_email=masked_email_str, login_type=login_type)
         else:
             _record_failed_attempt(username)
             locked, secs = _check_lockout(username)
@@ -800,11 +905,11 @@ def verify_pin():
 
     # Verify PIN
     if pin_data['pin'] != pin_entered:
-        flash("Invalid PIN. Try again.")
-        # Re-render with the same PIN displayed again
+        flash("Invalid verification code. Please check your email and try again.", "danger")
         pending = session.get('pending_login', {})
         login_type = pending.get('role', 'Staff').lower()
-        return render_template('pin_verify.html', username=username, pin_display=pin_data['pin'], login_type=login_type)
+        masked_email_str = pending.get('masked_email', 'your email')
+        return render_template('pin_verify.html', username=username, masked_email=masked_email_str, login_type=login_type)
 
     # PIN verified! Complete login
     pending = session.get('pending_login', {})
@@ -987,13 +1092,16 @@ def staff_dashboard():
         leave_requests = []
 
     try:
+        now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
         notifications = conn.execute(
             '''SELECT * FROM notifications 
-               WHERE user_id = ? OR user_id IS NULL 
+               WHERE (user_id = ? OR user_id IS NULL)
+                 AND (expires_at IS NULL OR expires_at > ?)
                ORDER BY created_at DESC LIMIT 20''',
-            (user_id,)
+            (user_id, now_str)
         ).fetchall()
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error fetching notifications: {e}")
         notifications = []
 
     leave_summary = get_user_leave_summary(user_id, conn=conn)
@@ -1226,6 +1334,7 @@ def admin_dashboard():
         weekday_options=WEEKDAY_OPTIONS,
         departments=ALLOWED_DEPARTMENTS,
         stats=stats,
+        now_str=ist_now().strftime('%Y-%m-%d %H:%M:%S'),
     )
 
 
@@ -1333,12 +1442,13 @@ def admin_action():
 
     try:
         if action_type == 'add_user':
-            new_user = request.form.get('new_username', '').strip()
-            new_pass = request.form.get('new_password', '')
-            dept     = request.form.get('department', '')
-            weekoff  = request.form.get('weekoff', 'Sunday')
-            pl_quota = request.form.get('pl_quota', '18').strip()
-            pl_val   = int(pl_quota) if pl_quota.isdigit() else 18
+            new_user  = request.form.get('new_username', '').strip()
+            new_pass  = request.form.get('new_password', '')
+            dept      = request.form.get('department', '')
+            weekoff   = request.form.get('weekoff', 'Sunday')
+            new_email = request.form.get('new_email', '').strip()
+            pl_quota  = request.form.get('pl_quota', '18').strip()
+            pl_val    = int(pl_quota) if pl_quota.isdigit() else 18
 
             if not new_user or not new_pass or dept not in ALLOWED_DEPARTMENTS:
                 flash("Invalid input.")
@@ -1347,14 +1457,24 @@ def admin_action():
             else:
                 try:
                     conn.execute(
-                        "INSERT INTO users (username, password, department, role, shift, weekoff, pl_quota, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?)",
-                        (new_user, generate_password_hash(new_pass), dept, 'Staff',
+                        "INSERT INTO users (username, password, department, role, email, shift, weekoff, pl_quota, security_question, security_answer) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (new_user, generate_password_hash(new_pass), dept, 'Staff', new_email or None,
                          '09:00 AM - 06:00 PM', weekoff, pl_val, 'Set by admin', 'yes')
                     )
-                    log_audit('USER_CREATED', f"{new_user} ({dept})", session['user_id'], conn=conn)
+                    log_audit('USER_CREATED', f"{new_user} ({dept}) [Email: {new_email or 'None'}]", session['user_id'], conn=conn)
                     flash(f"✅ Employee '{new_user}' created with {pl_val} PL quota.")
                 except sqlite3.IntegrityError:
                     flash(f"Username '{new_user}' already exists.")
+
+        elif action_type == 'update_email':
+            target    = request.form.get('target_user', '').strip()
+            new_email = request.form.get('new_email', '').strip()
+            if not target or not new_email or '@' not in new_email:
+                flash("Valid email address required.")
+            else:
+                conn.execute("UPDATE users SET email=? WHERE username=?", (new_email, target))
+                log_audit('USER_EMAIL_UPDATED', f"{target} -> {new_email}", session['user_id'], conn=conn)
+                flash(f"✅ Email updated for '{target}' ({new_email}).")
 
         elif action_type == 'delete_user':
             target = request.form.get('target_user', '').strip()
@@ -1502,14 +1622,38 @@ def admin_action():
                 flash("Leave record not found or already reviewed.")
 
         elif action_type == 'issue_warning':
-            target = request.form.get('target_user', '').strip()
-            warn_title = request.form.get('warn_title', '').strip()
-            warn_msg = request.form.get('warn_message', '').strip()
-            warn_type = request.form.get('warn_type', 'warning')
+            target        = request.form.get('target_user', '').strip()
+            warn_title    = request.form.get('warn_title', '').strip()
+            warn_msg      = request.form.get('warn_message', '').strip()
+            warn_type     = request.form.get('warn_type', 'warning')
+            warn_duration = request.form.get('warn_duration', '24h').strip()
+            warn_custom   = request.form.get('warn_custom_expiry', '').strip()
+
             if not warn_title or not warn_msg:
                 flash("Title and message are required.")
             else:
-                now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+                now_dt  = ist_now()
+                now_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
+
+                expires_at = None
+                if warn_duration == '24h':
+                    expires_at = (now_dt + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+                elif warn_duration == '3d':
+                    expires_at = (now_dt + timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
+                elif warn_duration == '7d':
+                    expires_at = (now_dt + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+                elif warn_duration == '30d':
+                    expires_at = (now_dt + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+                elif warn_duration == 'custom' and warn_custom:
+                    clean_c = warn_custom.replace('T', ' ')
+                    if len(clean_c) == 16:
+                        clean_c += ':00'
+                    expires_at = clean_c
+                elif warn_duration == 'never':
+                    expires_at = None
+                else:
+                    expires_at = (now_dt + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+
                 target_id = None
                 if target != 'All':
                     u = conn.execute("SELECT id FROM users WHERE username=?", (target,)).fetchone()
@@ -1520,11 +1664,12 @@ def admin_action():
                         target = None
                 if target:
                     conn.execute(
-                        "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
-                        (target_id, warn_type, warn_title, warn_msg, now_str, session['username'])
+                        "INSERT INTO notifications (user_id, type, title, message, created_at, created_by, expires_at) VALUES (?,?,?,?,?,?,?)",
+                        (target_id, warn_type, warn_title, warn_msg, now_str, session['username'], expires_at)
                     )
-                    log_audit('WARNING_ISSUED', f"To {target}: {warn_title}", session['user_id'], conn=conn)
-                    flash(f"✅ Warning/Notice issued to {target}.")
+                    expiry_tag = f" (Valid till: {expires_at})" if expires_at else " (Permanent)"
+                    log_audit('WARNING_ISSUED', f"To {target}: {warn_title}{expiry_tag}", session['user_id'], conn=conn)
+                    flash(f"✅ Warning/Notice issued to {target}{expiry_tag}.")
 
         elif action_type == 'delete_warning':
             warn_id = request.form.get('warn_id', '')
