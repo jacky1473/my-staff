@@ -1,0 +1,5 @@
+# MyStaff Softphone Dependencies for Windows Desktop Client
+requests>=2.25.1
+pillow>=8.0.0
+pystray>=0.19.0
+pyinstaller>=5.0.0

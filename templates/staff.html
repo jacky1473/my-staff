@@ -5,7 +5,6 @@
 {% block head %}
 <style>
   .dashboard-container { max-width: 1300px; margin: 0 auto; padding: 1.25rem; }
-  .stat-grid-leaves { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
   .clock-box { background: linear-gradient(135deg, rgba(0,217,255,0.1), rgba(57,255,20,0.05)); border: 1px solid var(--glass-border); border-radius: 0.75rem; }
   .warning-card { border-left: 4px solid var(--danger); background: rgba(239, 68, 68, 0.1); border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; }
   .notice-card { border-left: 4px solid var(--accent-cyan); background: rgba(0, 217, 255, 0.08); border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; }
@@ -16,7 +15,6 @@
   .badge-lwp { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
   @media (max-width: 767px) {
     .dashboard-container { padding: 1rem 0.75rem; }
-    .stat-grid-leaves { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
   }
 </style>
 {% endblock %}
@@ -169,55 +167,28 @@
       </div>
     </div>
 
-    <!-- 3. PL / UL / LWP LEAVE TRACKER -->
+    <!-- 3. LEAVE APPLICATIONS (ADMIN ASSIGNS LEAVE TYPE) -->
     <div class="col-lg-7 col-md-12">
       <div class="elevated-card p-4 h-100">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="page-subtitle mb-0">🌴 Leave Tracker (PL / UL / LWP)</h5>
+          <h5 class="page-subtitle mb-0">🌴 Leave Applications</h5>
           <button class="btn btn-primary-glow btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#applyLeaveCollapse">
             ➕ Apply Leave
           </button>
         </div>
 
-        <!-- Leave Balance Cards -->
-        <div class="stat-grid-leaves mb-3">
-          <div class="stat-card">
-            <div class="stat-number text-success">{{ leave_summary.pl_balance }} <span style="font-size: 0.8rem; color: var(--text-muted);">/ {{ leave_summary.pl_quota }}</span></div>
-            <div class="stat-label">PL Available</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number text-info">{{ leave_summary.pl_used }}</div>
-            <div class="stat-label">PL Used</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number text-warning">{{ leave_summary.ul_used }}</div>
-            <div class="stat-label">UL (Unpaid)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number text-danger">{{ leave_summary.lwp_used }}</div>
-            <div class="stat-label">LWP Days</div>
-          </div>
-        </div>
-
-        <!-- Apply Leave Collapsible Form -->
+        <!-- Apply Leave Collapsible Form (Dates + Reason only) -->
         <div class="collapse mb-3" id="applyLeaveCollapse">
           <div class="shift-summary-box">
             <h6 class="page-subtitle mb-2" style="font-size: 0.95rem;">Submit Leave Request</h6>
+            <p class="text-muted small mb-2">Submit your dates and reason. Leave type and approvals will be classified and assigned by Admin.</p>
             <form action="/staff/leave/apply" method="POST">
               <div class="row g-2 mb-2">
-                <div class="col-md-4">
-                  <label class="section-label">Leave Type</label>
-                  <select name="leave_type" class="form-select form-select-sm" required>
-                    <option value="PL">🟢 PL — Paid Leave ({{ leave_summary.pl_balance }} left)</option>
-                    <option value="UL">🟡 UL — Unpaid Leave</option>
-                    <option value="LWP">🔴 LWP — Leave Without Pay</option>
-                  </select>
-                </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                   <label class="section-label">Start Date</label>
                   <input type="date" name="start_date" class="form-control form-control-sm" required>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                   <label class="section-label">End Date</label>
                   <input type="date" name="end_date" class="form-control form-control-sm" required>
                 </div>
@@ -239,27 +210,26 @@
         <div class="table-responsive">
           <table class="table-premium table-sm">
             <thead>
-              <tr><th>Type</th><th>Duration</th><th>Days</th><th>Reason</th><th>Status</th></tr>
+              <tr><th>Duration</th><th>Days</th><th>Reason</th><th>Status</th></tr>
             </thead>
             <tbody>
               {% for req in leave_requests %}
               <tr>
-                <td><span class="leave-type-badge badge-{{ req.leave_type | lower }}">{{ req.leave_type }}</span></td>
                 <td style="font-size: 0.85rem;">{{ req.start_date }} → {{ req.end_date }}</td>
                 <td class="fw-bold" style="font-size: 0.85rem;">{{ req.days }}d</td>
-                <td style="font-size: 0.85rem; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ req.reason }}">{{ req.reason }}</td>
+                <td style="font-size: 0.85rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ req.reason }}">{{ req.reason }}</td>
                 <td>
                   {% if req.status == 'Approved' %}
-                    <span class="badge bg-success" title="Approved by {{ req.reviewed_by or 'Admin' }}">✅ Approved</span>
+                    <span class="badge bg-success" title="Approved by {{ req.reviewed_by or 'Admin' }}">✅ Approved ({{ req.leave_type }})</span>
                   {% elif req.status == 'Rejected' %}
                     <span class="badge bg-danger" title="{{ req.admin_remark }}">❌ Rejected</span>
                   {% else %}
-                    <span class="badge bg-warning text-dark">⏳ Pending</span>
+                    <span class="badge bg-warning text-dark">⏳ Pending Admin Review</span>
                   {% endif %}
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="5" class="text-center text-muted py-3">No leave applications submitted yet.</td></tr>
+              <tr><td colspan="4" class="text-center text-muted py-3">No leave applications submitted yet.</td></tr>
               {% endfor %}
             </tbody>
           </table>

@@ -88,36 +88,50 @@
         <button class="portal-tab" data-target="reports-pane">📊 Reports</button>
       </div>
 
-      <!-- PANE 1: LEAVE APPROVALS -->
+      <!-- PANE 1: LEAVE APPROVALS & LEAVE TRACKER -->
       <div id="leaves-pane" class="portal-pane">
         <div class="elevated-card p-3 mb-3">
-          <h6 class="page-subtitle mb-2">⏳ Pending Leave Requests</h6>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="page-subtitle mb-0">⏳ Pending Leave Requests</h6>
+            {% if pending_leaves %}
+            <span class="badge bg-warning text-dark">{{ pending_leaves|length }} Pending</span>
+            {% endif %}
+          </div>
           {% if pending_leaves %}
             {% for req in pending_leaves %}
-            <div class="card p-2 mb-2" style="background: var(--glass-bg); border: 1px solid var(--glass-border);">
+            <div class="card p-3 mb-2" style="background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px;">
               <div class="d-flex justify-content-between align-items-center mb-1">
-                <strong>{{ req.username }}</strong>
-                <span class="leave-type-badge badge-{{ req.leave_type | lower }}">{{ req.leave_type }} ({{ req.days }}d)</span>
+                <strong>{{ req.username }} <span class="badge bg-secondary ms-1" style="font-size: 0.72rem;">{{ req.department }}</span></strong>
+                <span class="badge bg-info text-dark">{{ req.days }} day(s) requested</span>
               </div>
-              <div class="small text-muted mb-1">{{ req.start_date }} → {{ req.end_date }}</div>
-              <div class="small mb-2" style="font-style: italic;">"{{ req.reason or 'No reason provided' }}"</div>
+              <div class="small text-muted mb-1">📅 {{ req.start_date }} → {{ req.end_date }}</div>
+              <div class="small mb-2 p-2 rounded" style="background: rgba(255,255,255,0.04); font-style: italic;">
+                "{{ req.reason or 'No reason provided' }}"
+              </div>
               
-              <div class="d-flex gap-2">
-                <!-- Approve Form -->
-                <form action="/admin_action" method="POST" class="flex-grow-1">
-                  <input type="hidden" name="action_type" value="approve_leave">
-                  <input type="hidden" name="leave_id" value="{{ req.id }}">
-                  <input type="hidden" name="admin_remark" value="Approved by Admin">
-                  <button type="submit" class="btn btn-success btn-sm w-100 py-1">Approve</button>
-                </form>
-                <!-- Reject Form -->
-                <form action="/admin_action" method="POST" class="flex-grow-1">
-                  <input type="hidden" name="action_type" value="reject_leave">
-                  <input type="hidden" name="leave_id" value="{{ req.id }}">
-                  <input type="hidden" name="admin_remark" value="Declined per operational requirement">
-                  <button type="submit" class="btn btn-outline-danger btn-sm w-100 py-1">Reject</button>
-                </form>
-              </div>
+              <!-- Admin Decision Form: Admin assigns Leave Type -->
+              <form action="/admin_action" method="POST" class="border-top border-secondary pt-2">
+                <input type="hidden" name="leave_id" value="{{ req.id }}">
+                <div class="mb-2">
+                  <label class="section-label small mb-1" style="font-size: 0.72rem; color: var(--accent-cyan);">Assign Leave Type</label>
+                  <select name="leave_type" class="form-select form-select-sm" required>
+                    <option value="PL" selected>🟢 PL — Paid Leave</option>
+                    <option value="UL">🟡 UL — Unpaid Leave</option>
+                    <option value="LWP">🔴 LWP — Leave Without Pay</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <input type="text" name="admin_remark" class="form-control form-control-sm" placeholder="Admin remark (optional)">
+                </div>
+                <div class="d-flex gap-2">
+                  <button type="submit" name="action_type" value="approve_leave" class="btn btn-success btn-sm flex-grow-1 py-1">
+                    ✅ Approve
+                  </button>
+                  <button type="submit" name="action_type" value="reject_leave" class="btn btn-outline-danger btn-sm flex-grow-1 py-1">
+                    ❌ Reject
+                  </button>
+                </div>
+              </form>
             </div>
             {% endfor %}
           {% else %}
@@ -125,10 +139,48 @@
           {% endif %}
         </div>
 
+        <!-- STAFF LEAVE TRACKER (ADMIN ONLY) -->
+        <div class="elevated-card p-3 mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="page-subtitle mb-0">🌴 Staff Leave Tracker</h6>
+            <span class="badge bg-secondary" style="font-size: 0.7rem;">Admin View</span>
+          </div>
+          <p class="text-muted small mb-2" style="font-size: 0.75rem;">Company-wide leave balances & quota tracker.</p>
+          <div class="table-responsive" style="max-height: 220px; overflow-y: auto;">
+            <table class="table-premium table-sm" style="font-size: 0.78rem;">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th class="text-center">PL Left</th>
+                  <th class="text-center">PL Used</th>
+                  <th class="text-center">UL</th>
+                  <th class="text-center">LWP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for st in staff_leave_tracker %}
+                <tr>
+                  <td>
+                    <strong>{{ st.username }}</strong>
+                    <div class="text-muted" style="font-size: 0.68rem;">{{ st.department }}</div>
+                  </td>
+                  <td class="text-center fw-bold text-success">{{ st.pl_balance }}<span class="text-muted" style="font-size: 0.68rem;">/{{ st.pl_quota }}</span></td>
+                  <td class="text-center text-info">{{ st.pl_used }}</td>
+                  <td class="text-center text-warning">{{ st.ul_used }}</td>
+                  <td class="text-center text-danger">{{ st.lwp_used }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-2">No staff records.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         {% if recent_leaves %}
         <div class="elevated-card p-3">
           <h6 class="page-subtitle mb-2">Recent Decision History</h6>
-          <div style="max-height: 220px; overflow-y: auto;">
+          <div style="max-height: 180px; overflow-y: auto;">
             {% for r in recent_leaves %}
             <div class="d-flex justify-content-between align-items-center py-1 border-bottom border-secondary small">
               <div>

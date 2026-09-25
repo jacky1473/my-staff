@@ -8,10 +8,12 @@ import io
 import csv
 import gzip
 import smtplib
+import secrets
+from functools import wraps
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify, Response
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify, Response, g
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
 import shutil
@@ -255,6 +257,16 @@ def init_db():
         created_at TEXT NOT NULL
     )''')
 
+    # API authentication tokens table for Windows Softphone / Desktop Client
+    conn.execute('''CREATE TABLE IF NOT EXISTS api_tokens (
+        token       TEXT PRIMARY KEY,
+        user_id     INTEGER NOT NULL,
+        created_at  TEXT NOT NULL,
+        last_seen   TEXT NOT NULL,
+        device_info TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )''')
+
     # High performance query indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE)")
@@ -268,6 +280,8 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_logs(user_id, timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id)")
 
     conn.commit()
     conn.close()
@@ -1253,14 +1267,9 @@ def apply_leave():
         return redirect(url_for('login'))
 
     user_id = session['user_id']
-    leave_type = request.form.get('leave_type', '').strip().upper()
     start_date = request.form.get('start_date', '').strip()
     end_date = request.form.get('end_date', '').strip()
     reason = request.form.get('reason', '').strip()
-
-    if leave_type not in ('PL', 'UL', 'LWP'):
-        flash("Invalid leave type. Please select PL, UL, or LWP.")
-        return redirect(url_for('staff_dashboard'))
 
     if not start_date or not end_date:
         flash("Both Start Date and End Date are required.")
@@ -1279,25 +1288,19 @@ def apply_leave():
 
     days_requested = (d_end - d_start).days + 1
 
-    if leave_type == 'PL':
-        summary = get_user_leave_summary(user_id)
-        if days_requested > summary['pl_balance']:
-            flash(f"Insufficient PL balance! Requested: {days_requested} day(s), Available: {summary['pl_balance']}. Consider applying for UL or LWP.")
-            return redirect(url_for('staff_dashboard'))
-
     conn = get_db_connection()
     try:
         conn.execute(
             '''INSERT INTO leaves (user_id, leave_type, start_date, end_date, days, reason, status, applied_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)''',
-            (user_id, leave_type, start_date, end_date, days_requested, reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+               VALUES (?, 'Pending', ?, ?, ?, ?, 'Pending', ?)''',
+            (user_id, start_date, end_date, days_requested, reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
         )
-        log_audit('LEAVE_APPLIED', f"{leave_type}: {start_date} to {end_date} ({days_requested}d)", user_id, conn=conn)
+        log_audit('LEAVE_APPLIED', f"Leave requested: {start_date} to {end_date} ({days_requested}d)", user_id, conn=conn)
         conn.commit()
     finally:
         conn.close()
 
-    flash(f"✅ Leave application submitted for {days_requested} day(s) ({leave_type}).")
+    flash(f"✅ Leave application submitted for {days_requested} day(s). Awaiting Admin classification and approval.")
     return redirect(url_for('staff_dashboard'))
 
 
@@ -1424,6 +1427,16 @@ def admin_dashboard():
         ORDER BY u.department, u.username
     ''', (today,)).fetchall()
 
+    staff_leave_tracker = []
+    for u in users:
+        summary = get_user_leave_summary(u['id'], conn=conn)
+        staff_leave_tracker.append({
+            'user_id': u['id'],
+            'username': u['username'],
+            'department': u['department'],
+            **summary
+        })
+
     stats = get_today_stats(conn=conn)
     conn.close()
 
@@ -1433,6 +1446,7 @@ def admin_dashboard():
         inactive_users=inactive_users,
         pending_leaves=pending_leaves,
         recent_leaves=recent_leaves,
+        staff_leave_tracker=staff_leave_tracker,
         warnings=warnings,
         attendance_records=attendance_records,
         today_day=today_day,
@@ -1670,13 +1684,16 @@ def admin_action():
 
         elif action_type == 'approve_leave':
             leave_id = request.form.get('leave_id')
+            assigned_type = request.form.get('leave_type', 'PL').strip().upper()
+            if assigned_type not in ('PL', 'UL', 'LWP'):
+                assigned_type = 'PL'
             admin_remark = request.form.get('admin_remark', '').strip()
             leave = conn.execute("SELECT * FROM leaves WHERE id = ?", (leave_id,)).fetchone()
             if leave and leave['status'] == 'Pending':
                 now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
                 conn.execute(
-                    "UPDATE leaves SET status='Approved', reviewed_by=?, reviewed_at=?, admin_remark=? WHERE id=?",
-                    (session['username'], now_str, admin_remark, leave_id)
+                    "UPDATE leaves SET status='Approved', leave_type=?, reviewed_by=?, reviewed_at=?, admin_remark=? WHERE id=?",
+                    (assigned_type, session['username'], now_str, admin_remark, leave_id)
                 )
                 try:
                     cur_dt = datetime.strptime(leave['start_date'], '%Y-%m-%d').date()
@@ -1685,11 +1702,11 @@ def admin_action():
                         dt_s = cur_dt.strftime('%Y-%m-%d')
                         rec = conn.execute("SELECT id FROM attendance WHERE user_id=? AND date=?", (leave['user_id'], dt_s)).fetchone()
                         if rec:
-                            conn.execute("UPDATE attendance SET status=? WHERE id=?", (leave['leave_type'], rec['id']))
+                            conn.execute("UPDATE attendance SET status=? WHERE id=?", (assigned_type, rec['id']))
                         else:
                             conn.execute(
                                 "INSERT INTO attendance (user_id, date, status) VALUES (?,?,?)",
-                                (leave['user_id'], dt_s, leave['leave_type'])
+                                (leave['user_id'], dt_s, assigned_type)
                             )
                         cur_dt += timedelta(days=1)
                 except Exception as e:
@@ -1697,12 +1714,12 @@ def admin_action():
 
                 conn.execute(
                     "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
-                    (leave['user_id'], 'notice', f"Leave Approved: {leave['leave_type']}",
-                     f"Your {leave['leave_type']} request from {leave['start_date']} to {leave['end_date']} has been approved. {admin_remark}",
+                    (leave['user_id'], 'notice', f"Leave Approved: {assigned_type}",
+                     f"Your leave request from {leave['start_date']} to {leave['end_date']} has been approved as {assigned_type} by Admin. {admin_remark}",
                      now_str, session['username'])
                 )
-                log_audit('LEAVE_APPROVED', f"Leave #{leave_id} ({leave['leave_type']})", session['user_id'], conn=conn)
-                flash(f"✅ Leave #{leave_id} approved as {leave['leave_type']}.")
+                log_audit('LEAVE_APPROVED', f"Leave #{leave_id} approved as {assigned_type}", session['user_id'], conn=conn)
+                flash(f"✅ Leave #{leave_id} approved as {assigned_type}.")
             else:
                 flash("Leave record not found or already reviewed.")
 
@@ -1718,8 +1735,8 @@ def admin_action():
                 )
                 conn.execute(
                     "INSERT INTO notifications (user_id, type, title, message, created_at, created_by) VALUES (?,?,?,?,?,?)",
-                    (leave['user_id'], 'warning', f"Leave Rejected: {leave['leave_type']}",
-                     f"Your {leave['leave_type']} request ({leave['start_date']} to {leave['end_date']}) was rejected. Reason: {admin_remark or 'No remark'}",
+                    (leave['user_id'], 'warning', "Leave Request Rejected",
+                     f"Your leave request ({leave['start_date']} to {leave['end_date']}) was rejected by Admin. Reason: {admin_remark or 'Declined per operational requirement'}",
                      now_str, session['username'])
                 )
                 log_audit('LEAVE_REJECTED', f"Leave #{leave_id}", session['user_id'], conn=conn)
@@ -2065,6 +2082,404 @@ def api_status():
             "total_registered_staff": total_staff,
             "active_in_office_now": in_office,
         }
+    })
+
+
+# ---------------------------------------------------------------------------
+# REST API FOR WINDOWS DESKTOP SOFTPHONE CLIENT
+# ---------------------------------------------------------------------------
+def get_user_from_token(token, conn=None):
+    if not token:
+        return None
+    close_needed = False
+    if conn is None:
+        conn = get_db_connection()
+        close_needed = True
+    try:
+        row = conn.execute('''
+            SELECT u.* FROM users u
+            JOIN api_tokens t ON u.id = t.user_id
+            WHERE t.token = ? AND (u.is_active = 1 OR u.is_active IS NULL)
+        ''', (token,)).fetchone()
+        if row:
+            now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+            conn.execute("UPDATE api_tokens SET last_seen = ? WHERE token = ?", (now_str, token))
+            if not close_needed:
+                conn.commit()
+            return dict(row)
+        return None
+    finally:
+        if close_needed:
+            try:
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+
+
+def require_api_token(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        token = None
+        if auth_header.startswith('Bearer '):
+            token = auth_header.split(' ', 1)[1].strip()
+        elif request.args.get('token'):
+            token = request.args.get('token').strip()
+
+        if not token:
+            return jsonify({"status": "error", "error": "Missing authorization token"}), 401
+
+        user = get_user_from_token(token)
+        if not user:
+            return jsonify({"status": "error", "error": "Invalid or expired token"}), 401
+
+        if user.get('role') != 'Staff':
+            return jsonify({"status": "error", "error": "Access restricted to staff client"}), 403
+
+        g.current_user = user
+        g.api_token = token
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_auth_login():
+    """Desktop / Softphone login endpoint"""
+    data = request.get_json(silent=True) or request.form
+    input_username = data.get('username', '').strip()
+    password = data.get('password', '')
+
+    if not input_username or not password:
+        return jsonify({"status": "error", "error": "Username and password required"}), 400
+
+    locked, secs = _check_lockout(input_username)
+    if locked:
+        mins = secs // 60 + 1
+        return jsonify({"status": "error", "error": f"Account locked. Try again in {mins} minute(s)."}), 429
+
+    conn = get_db_connection()
+    user = conn.execute('SELECT * FROM users WHERE username = ? COLLATE NOCASE', (input_username,)).fetchone()
+    conn.close()
+
+    canonical_username = user['username'] if user else input_username
+    if user and user['role'] == 'Staff' and check_password_hash(user['password'], password):
+        if 'is_active' in user.keys() and user['is_active'] == 0:
+            return jsonify({"status": "error", "error": "Account deactivated. Please contact HR."}), 403
+
+        if user['department'] not in ALLOWED_DEPARTMENTS:
+            return jsonify({"status": "error", "error": "Access denied: unauthorized department."}), 403
+
+        _clear_attempts(canonical_username)
+
+        pin = generate_pin()
+        _store_pin(canonical_username, pin, 'Staff', user['id'], user['department'])
+
+        user_email = user['email'] if 'email' in user.keys() and user['email'] else ''
+        target_email = user_email.strip() if user_email and '@' in user_email else DEFAULT_TEST_EMAIL
+        masked_email_str = mask_email(target_email)
+
+        company_name = get_cached_company_name()
+        send_email_otp(target_email, pin, username=canonical_username, company_name=company_name)
+
+        return jsonify({
+            "status": "otp_required",
+            "username": canonical_username,
+            "masked_email": masked_email_str,
+            "message": f"Verification code sent to {masked_email_str}."
+        })
+    else:
+        _record_failed_attempt(canonical_username)
+        locked, secs = _check_lockout(canonical_username)
+        if locked:
+            return jsonify({"status": "error", "error": f"Account locked for {LOCKOUT_MINUTES} minutes."}), 429
+        conn = get_db_connection()
+        row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ? COLLATE NOCASE", (canonical_username,)).fetchone()
+        conn.close()
+        count = row['attempts'] if row else 1
+        remaining = max(0, MAX_ATTEMPTS - count)
+        return jsonify({"status": "error", "error": f"Invalid credentials. {remaining} attempt(s) remaining."}), 401
+
+
+@app.route('/api/auth/verify-pin', methods=['POST'])
+def api_auth_verify_pin():
+    """Verify PIN and issue authentication Bearer token for Desktop Softphone"""
+    data = request.get_json(silent=True) or request.form
+    username = data.get('username', '').strip()
+    pin_entered = data.get('pin', '').strip()
+    device_info = data.get('device_info', 'Windows Softphone')
+
+    if not username or not pin_entered:
+        return jsonify({"status": "error", "error": "Username and PIN are required."}), 400
+
+    pin_data = _get_pin(username)
+    if not pin_data:
+        return jsonify({"status": "error", "error": "PIN expired or session invalid. Please log in again."}), 400
+
+    if ist_now() > pin_data['expires']:
+        _clear_pin(username)
+        return jsonify({"status": "error", "error": "PIN expired. Please log in again."}), 400
+
+    if pin_data['pin'] != pin_entered:
+        _record_failed_attempt(username)
+        locked, secs = _check_lockout(username)
+        if locked:
+            _clear_pin(username)
+            return jsonify({"status": "error", "error": f"Account locked for {LOCKOUT_MINUTES} minutes."}), 429
+        conn = get_db_connection()
+        row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
+        conn.close()
+        count = row['attempts'] if row else 1
+        remaining = max(0, MAX_ATTEMPTS - count)
+        return jsonify({"status": "error", "error": f"Invalid verification PIN. {remaining} attempt(s) left."}), 401
+
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM login_lockouts WHERE username = ? COLLATE NOCASE", (username,))
+        conn.execute("DELETE FROM login_pins WHERE username = ? COLLATE NOCASE", (username,))
+
+        token = secrets.token_hex(32)
+        now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute('''
+            INSERT INTO api_tokens (token, user_id, created_at, last_seen, device_info)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (token, pin_data['user_id'], now_str, now_str, device_info))
+
+        user = conn.execute("SELECT * FROM users WHERE id = ?", (pin_data['user_id'],)).fetchone()
+        log_audit('SOFTPHONE_LOGIN', f"Device: {device_info}", user['id'], conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({
+        "status": "success",
+        "token": token,
+        "user": {
+            "id": user['id'],
+            "username": user['username'],
+            "department": user['department'],
+            "role": user['role'],
+            "shift": user['shift'],
+            "weekoff": user['weekoff']
+        }
+    })
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+@require_api_token
+def api_auth_logout():
+    token = g.api_token
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM api_tokens WHERE token = ?", (token,))
+        log_audit('SOFTPHONE_LOGOUT', "Logged out from softphone", g.current_user['id'], conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"status": "success", "message": "Successfully logged out."})
+
+
+@app.route('/api/staff/status', methods=['GET'])
+@require_api_token
+def api_staff_status():
+    user = g.current_user
+    today = today_str()
+    conn = get_db_connection()
+
+    rec = conn.execute(
+        "SELECT * FROM attendance WHERE user_id = ? AND date = ?", (user['id'], today)
+    ).fetchone()
+
+    now_str = ist_now().strftime('%Y-%m-%d %H:%M:%S')
+    notifications = conn.execute('''
+        SELECT id, type, title, message, created_at, expires_at 
+        FROM notifications
+        WHERE (user_id = ? OR user_id IS NULL)
+          AND (expires_at IS NULL OR expires_at > ?)
+        ORDER BY created_at DESC LIMIT 5
+    ''', (user['id'], now_str)).fetchall()
+
+    recent_leaves = conn.execute('''
+        SELECT id, start_date, end_date, days, reason, status, leave_type, applied_at, admin_remark
+        FROM leaves WHERE user_id = ?
+        ORDER BY applied_at DESC LIMIT 5
+    ''', (user['id'],)).fetchall()
+
+    conn.close()
+
+    today_hours = None
+    if rec and rec['clock_in']:
+        if rec['clock_out']:
+            today_hours = rec['total_hours'] or calculate_hours_worked(rec['clock_in'], rec['clock_out'])
+        else:
+            today_hours = calculate_hours_worked(rec['clock_in'], ist_now().strftime('%H:%M:%S'))
+
+    company_name = get_cached_company_name()
+
+    return jsonify({
+        "status": "success",
+        "company_name": company_name,
+        "server_time": ist_now().strftime('%H:%M:%S'),
+        "today_date": today,
+        "today_day": ist_now().strftime('%A'),
+        "user": {
+            "id": user['id'],
+            "username": user['username'],
+            "department": user['department'],
+            "shift": user['shift'],
+            "weekoff": user['weekoff']
+        },
+        "attendance": {
+            "clock_in": rec['clock_in'] if rec else None,
+            "clock_out": rec['clock_out'] if rec else None,
+            "duration": today_hours,
+            "status": rec['status'] if rec else "Not Clocked In",
+            "is_clocked_in": bool(rec and rec['clock_in'] and not rec['clock_out']),
+            "is_completed": bool(rec and rec['clock_in'] and rec['clock_out'])
+        },
+        "notifications": [dict(n) for n in notifications],
+        "recent_leaves": [dict(l) for l in recent_leaves]
+    })
+
+
+@app.route('/api/staff/clock', methods=['POST'])
+@require_api_token
+def api_staff_clock():
+    data = request.get_json(silent=True) or request.form
+    action = data.get('action')
+    user = g.current_user
+    user_id = user['id']
+    now = ist_now()
+    today = now.strftime('%Y-%m-%d')
+    now_time = now.strftime('%H:%M:%S')
+
+    if action not in ('in', 'out'):
+        return jsonify({"status": "error", "error": "Invalid action. Must be 'in' or 'out'."}), 400
+
+    conn = get_db_connection()
+    try:
+        rec = conn.execute(
+            'SELECT * FROM attendance WHERE user_id = ? AND date = ?', (user_id, today)
+        ).fetchone()
+
+        if action == 'in':
+            if not rec:
+                conn.execute(
+                    'INSERT INTO attendance (user_id, date, clock_in, status) VALUES (?,?,?,?)',
+                    (user_id, today, now_time, 'Present')
+                )
+                log_audit('CLOCK_IN_SOFTPHONE', today, user_id, conn=conn)
+                conn.commit()
+                msg = f"Clocked in successfully at {now_time}"
+            elif not rec['clock_in']:
+                new_status = 'Present' if (rec['status'] in ('Absent', None) or not rec['status']) else rec['status']
+                conn.execute(
+                    'UPDATE attendance SET clock_in = ?, status = ? WHERE id = ?',
+                    (now_time, new_status, rec['id'])
+                )
+                log_audit('CLOCK_IN_SOFTPHONE', today, user_id, conn=conn)
+                conn.commit()
+                msg = f"Clocked in successfully at {now_time}"
+            else:
+                return jsonify({"status": "error", "error": "You have already clocked in today."}), 400
+
+        elif action == 'out':
+            if rec and rec['clock_in'] and not rec['clock_out']:
+                tot_hrs = calculate_hours_worked(rec['clock_in'], now_time)
+                conn.execute(
+                    'UPDATE attendance SET clock_out = ?, total_hours = ? WHERE id = ?',
+                    (now_time, tot_hrs, rec['id'])
+                )
+                log_audit('CLOCK_OUT_SOFTPHONE', today, user_id, conn=conn)
+                conn.commit()
+                msg = f"Clocked out successfully at {now_time}. Duration: {tot_hrs}"
+            else:
+                return jsonify({"status": "error", "error": "Must clock in first or already clocked out today."}), 400
+
+        updated_rec = conn.execute(
+            'SELECT * FROM attendance WHERE user_id = ? AND date = ?', (user_id, today)
+        ).fetchone()
+
+        today_hours = None
+        if updated_rec and updated_rec['clock_in']:
+            if updated_rec['clock_out']:
+                today_hours = updated_rec['total_hours']
+            else:
+                today_hours = calculate_hours_worked(updated_rec['clock_in'], ist_now().strftime('%H:%M:%S'))
+
+    finally:
+        conn.close()
+
+    return jsonify({
+        "status": "success",
+        "message": msg,
+        "attendance": {
+            "clock_in": updated_rec['clock_in'] if updated_rec else None,
+            "clock_out": updated_rec['clock_out'] if updated_rec else None,
+            "duration": today_hours,
+            "status": updated_rec['status'] if updated_rec else None,
+            "is_clocked_in": bool(updated_rec and updated_rec['clock_in'] and not updated_rec['clock_out']),
+            "is_completed": bool(updated_rec and updated_rec['clock_in'] and updated_rec['clock_out'])
+        }
+    })
+
+
+@app.route('/api/staff/leave/apply', methods=['POST'])
+@require_api_token
+def api_staff_apply_leave():
+    data = request.get_json(silent=True) or request.form
+    user = g.current_user
+    user_id = user['id']
+    start_date = data.get('start_date', '').strip()
+    end_date = data.get('end_date', '').strip()
+    reason = data.get('reason', '').strip()
+
+    if not start_date or not end_date:
+        return jsonify({"status": "error", "error": "Start date and end date are required."}), 400
+
+    try:
+        d_start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        d_end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({"status": "error", "error": "Invalid date format. Use YYYY-MM-DD."}), 400
+
+    if d_end < d_start:
+        return jsonify({"status": "error", "error": "End date cannot be earlier than start date."}), 400
+
+    days_requested = (d_end - d_start).days + 1
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            '''INSERT INTO leaves (user_id, leave_type, start_date, end_date, days, reason, status, applied_at)
+               VALUES (?, 'Pending', ?, ?, ?, ?, 'Pending', ?)''',
+            (user_id, start_date, end_date, days_requested, reason, ist_now().strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        log_audit('LEAVE_APPLIED_SOFTPHONE', f"Leave: {start_date} to {end_date} ({days_requested}d)", user_id, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({
+        "status": "success",
+        "message": f"Leave application submitted for {days_requested} day(s). Awaiting Admin classification and approval."
+    })
+
+
+@app.route('/api/staff/leaves', methods=['GET'])
+@require_api_token
+def api_staff_leaves():
+    user = g.current_user
+    conn = get_db_connection()
+    leaves = conn.execute('''
+        SELECT id, start_date, end_date, days, reason, status, leave_type, applied_at, admin_remark
+        FROM leaves WHERE user_id = ?
+        ORDER BY applied_at DESC LIMIT 20
+    ''', (user['id'],)).fetchall()
+    conn.close()
+    return jsonify({
+        "status": "success",
+        "leaves": [dict(l) for l in leaves]
     })
 
 
