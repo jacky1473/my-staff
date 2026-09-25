@@ -37,3 +37,9 @@ Thumbs.db
 # Logs
 *.log
 test_*.png
+
+# Secrets & Environment Variables
+.env
+.env.local
+.env.*.local
+

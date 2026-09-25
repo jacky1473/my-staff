@@ -20,6 +20,35 @@ import threading
 import time
 
 # ---------------------------------------------------------------------------
+# Environment File Loader (Native - no external dependencies required)
+# ---------------------------------------------------------------------------
+def _load_env_file():
+    """Auto-load environment variables from .env file if present"""
+    env_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
+        '/data/.env',
+        '/app/.env',
+        '.env'
+    ]
+    for path in env_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            k, v = line.split('=', 1)
+                            k = k.strip()
+                            v = v.strip().strip("'\"")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+                break
+            except Exception:
+                pass
+
+_load_env_file()
+
+# ---------------------------------------------------------------------------
 # App Setup
 # ---------------------------------------------------------------------------
 app = Flask(__name__)

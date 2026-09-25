@@ -49,10 +49,14 @@ pipeline {
                     // Stop and remove old container if running
                     sh "docker rm -f ${appName} || true"
 
+                    // Check for .env file
+                    def envFileFlag = fileExists('.env') ? '--env-file .env' : (fileExists('/data/.env') ? '--env-file /data/.env' : '')
+
                     // Start new container with persistent database mount
                     sh """
                         docker run -d \\
                             --name ${appName} \\
+                            ${envFileFlag} \\
                             -p ${appPort}:${appPort} \\
                             -v /data:/data:z \\
                             -e PORT=${appPort} \\
