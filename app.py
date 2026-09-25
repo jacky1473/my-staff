@@ -196,7 +196,7 @@ def init_db():
 
     # Tables for multi-worker concurrency (PIN auth & brute force lockout)
     conn.execute('''CREATE TABLE IF NOT EXISTS login_pins (
-        username   TEXT PRIMARY KEY,
+        username   TEXT PRIMARY KEY COLLATE NOCASE,
         pin        TEXT NOT NULL,
         expires    TEXT NOT NULL,
         role       TEXT NOT NULL,
@@ -205,7 +205,7 @@ def init_db():
     )''')
 
     conn.execute('''CREATE TABLE IF NOT EXISTS login_lockouts (
-        username     TEXT PRIMARY KEY,
+        username     TEXT PRIMARY KEY COLLATE NOCASE,
         attempts     INTEGER NOT NULL DEFAULT 1,
         locked_until TEXT
     )''')
@@ -224,6 +224,9 @@ def init_db():
 
     # High performance query indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_lockouts_nocase ON login_lockouts(username COLLATE NOCASE)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_pins_nocase ON login_pins(username COLLATE NOCASE)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role_dept ON users(role, department)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_user_date_uniq ON attendance(user_id, date)")
@@ -505,9 +508,15 @@ def log_audit(action, details=None, user_id=None, conn=None):
 # Brute-force protection & Multi-Worker PIN Storage (SQLite-backed)
 # ---------------------------------------------------------------------------
 def _check_lockout(username):
+    if not username:
+        return False, 0
+    clean_user = username.strip()
     try:
         conn = get_db_connection()
-        row = conn.execute("SELECT attempts, locked_until FROM login_lockouts WHERE username = ?", (username,)).fetchone()
+        row = conn.execute(
+            "SELECT attempts, locked_until FROM login_lockouts WHERE username = ? COLLATE NOCASE",
+            (clean_user,)
+        ).fetchone()
         conn.close()
         if not row:
             return False, 0
@@ -517,6 +526,9 @@ def _check_lockout(username):
             if ist_now() < locked_until:
                 remaining = int((locked_until - ist_now()).total_seconds())
                 return True, remaining
+            else:
+                # Lockout period has elapsed; clean it up
+                _clear_attempts(clean_user)
         return False, 0
     except Exception as e:
         logger.error(f"Lockout check error: {e}")
@@ -524,17 +536,41 @@ def _check_lockout(username):
 
 
 def _record_failed_attempt(username):
+    if not username:
+        return
+    clean_user = username.strip()
     try:
         conn = get_db_connection()
-        row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ?", (username,)).fetchone()
-        count = (row['attempts'] + 1) if row else 1
+        row = conn.execute(
+            "SELECT attempts, locked_until FROM login_lockouts WHERE username = ? COLLATE NOCASE",
+            (clean_user,)
+        ).fetchone()
+
+        count = 1
+        if row:
+            locked_until_str = row['locked_until']
+            if locked_until_str:
+                locked_until = datetime.fromisoformat(locked_until_str)
+                # If existing lockout already expired, reset counter to 1
+                if ist_now() >= locked_until:
+                    count = 1
+                else:
+                    count = row['attempts'] + 1
+            else:
+                count = row['attempts'] + 1
+
         locked_until_str = None
         if count >= MAX_ATTEMPTS:
             locked_until = ist_now() + timedelta(minutes=LOCKOUT_MINUTES)
             locked_until_str = locked_until.isoformat()
-            logger.warning("Account locked: %s after %d failed attempts", username, count)
-        conn.execute("INSERT OR REPLACE INTO login_lockouts (username, attempts, locked_until) VALUES (?, ?, ?)",
-                     (username, count, locked_until_str))
+            logger.warning("Account locked: %s after %d failed attempts", clean_user, count)
+
+        # Clear any prior row with variant casing and store cleanly
+        conn.execute("DELETE FROM login_lockouts WHERE username = ? COLLATE NOCASE", (clean_user,))
+        conn.execute(
+            "INSERT INTO login_lockouts (username, attempts, locked_until) VALUES (?, ?, ?)",
+            (clean_user, count, locked_until_str)
+        )
         conn.commit()
         conn.close()
     except Exception as e:
@@ -542,9 +578,11 @@ def _record_failed_attempt(username):
 
 
 def _clear_attempts(username):
+    if not username:
+        return
     try:
         conn = get_db_connection()
-        conn.execute("DELETE FROM login_lockouts WHERE username = ?", (username,))
+        conn.execute("DELETE FROM login_lockouts WHERE username = ? COLLATE NOCASE", (username.strip(),))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -552,11 +590,16 @@ def _clear_attempts(username):
 
 
 def _store_pin(username, pin, role, user_id, department):
+    if not username:
+        return
     try:
         conn = get_db_connection()
         expires = (ist_now() + timedelta(minutes=PIN_EXPIRY_MINUTES)).isoformat()
-        conn.execute("INSERT OR REPLACE INTO login_pins (username, pin, expires, role, user_id, department) VALUES (?, ?, ?, ?, ?, ?)",
-                     (username, pin, expires, role, user_id, department))
+        conn.execute("DELETE FROM login_pins WHERE username = ? COLLATE NOCASE", (username.strip(),))
+        conn.execute(
+            "INSERT INTO login_pins (username, pin, expires, role, user_id, department) VALUES (?, ?, ?, ?, ?, ?)",
+            (username.strip(), pin, expires, role, user_id, department)
+        )
         conn.commit()
         conn.close()
     except Exception as e:
@@ -564,9 +607,11 @@ def _store_pin(username, pin, role, user_id, department):
 
 
 def _get_pin(username):
+    if not username:
+        return None
     try:
         conn = get_db_connection()
-        row = conn.execute("SELECT * FROM login_pins WHERE username = ?", (username,)).fetchone()
+        row = conn.execute("SELECT * FROM login_pins WHERE username = ? COLLATE NOCASE", (username.strip(),)).fetchone()
         conn.close()
         if not row:
             return None
@@ -583,9 +628,11 @@ def _get_pin(username):
 
 
 def _clear_pin(username):
+    if not username:
+        return
     try:
         conn = get_db_connection()
-        conn.execute("DELETE FROM login_pins WHERE username = ?", (username,))
+        conn.execute("DELETE FROM login_pins WHERE username = ? COLLATE NOCASE", (username.strip(),))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -805,19 +852,30 @@ def login():
 
     if request.method == 'POST':
         login_type = request.form.get('login_type', 'staff')
-        username = request.form.get('username', '').strip()
+        input_username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
 
-        # Check lockout
-        locked, secs = _check_lockout(username)
+        # Check lockout first (case-insensitive)
+        locked, secs = _check_lockout(input_username)
         if locked:
             mins = secs // 60 + 1
             flash(f"Account locked. Try again in {mins} minute(s).")
             return render_template('login.html', active_panel=login_type)
 
         conn = get_db_connection()
-        user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        user = conn.execute('SELECT * FROM users WHERE username = ? COLLATE NOCASE', (input_username,)).fetchone()
         conn.close()
+
+        # Canonical username: use existing DB username if user exists, else input username
+        canonical_username = user['username'] if user else input_username
+
+        # If canonical username differs in casing, check lockout for it too
+        if canonical_username != input_username:
+            locked, secs = _check_lockout(canonical_username)
+            if locked:
+                mins = secs // 60 + 1
+                flash(f"Account locked. Try again in {mins} minute(s).")
+                return render_template('login.html', active_panel=login_type)
 
         # Verify role matches login type
         expected_role = 'Admin' if login_type == 'admin' else 'Staff'
@@ -830,9 +888,12 @@ def login():
                 flash('Access denied: unauthorized department.')
                 return render_template('login.html', active_panel=login_type)
 
+            # Reset credential attempts upon valid credentials
+            _clear_attempts(canonical_username)
+
             # Generate PIN (4-digit OTP)
             pin = generate_pin()
-            _store_pin(username, pin, expected_role, user['id'], user['department'])
+            _store_pin(canonical_username, pin, expected_role, user['id'], user['department'])
 
             # Determine recipient email
             user_email = user['email'] if 'email' in user.keys() and user['email'] else ''
@@ -841,7 +902,7 @@ def login():
 
             # Store in session for verification page
             session['pending_login'] = {
-                'username': username,
+                'username': canonical_username,
                 'role': expected_role,
                 'user_id': user['id'],
                 'department': user['department'],
@@ -850,21 +911,21 @@ def login():
             }
 
             company_name = get_cached_company_name()
-            sent_ok, send_msg = send_email_otp(target_email, pin, username=username, company_name=company_name)
+            sent_ok, send_msg = send_email_otp(target_email, pin, username=canonical_username, company_name=company_name)
             if sent_ok:
                 flash(f"📧 4-digit verification code sent to {masked_email_str}.", "info")
             else:
                 flash(f"⚠️ {send_msg}", "warning")
 
-            return render_template('pin_verify.html', username=username, masked_email=masked_email_str, login_type=login_type)
+            return render_template('pin_verify.html', username=canonical_username, masked_email=masked_email_str, login_type=login_type)
         else:
-            _record_failed_attempt(username)
-            locked, secs = _check_lockout(username)
+            _record_failed_attempt(canonical_username)
+            locked, secs = _check_lockout(canonical_username)
             if locked:
                 flash(f"Account locked for {LOCKOUT_MINUTES} minutes.")
             else:
                 conn = get_db_connection()
-                row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ?", (username,)).fetchone()
+                row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ? COLLATE NOCASE", (canonical_username,)).fetchone()
                 conn.close()
                 count = row['attempts'] if row else 1
                 remaining = max(0, MAX_ATTEMPTS - count)
@@ -884,11 +945,13 @@ def verify_pin():
         flash("Session expired. Please login again.")
         return redirect(url_for('login'))
     
-    if session.get('pending_login', {}).get('username') != username:
+    pending = session.get('pending_login', {})
+    if pending.get('username', '').lower() != username.lower():
         flash("Session mismatch. Please login again.")
         return redirect(url_for('login'))
 
-    pin_data = _get_pin(username)
+    canonical_username = pending.get('username', username)
+    pin_data = _get_pin(canonical_username)
     if not pin_data:
         flash("PIN expired. Please login again.")
         if 'pending_login' in session:
@@ -898,29 +961,37 @@ def verify_pin():
     # Check PIN expiry
     if ist_now() > pin_data['expires']:
         flash("PIN expired. Please login again.")
-        _clear_pin(username)
+        _clear_pin(canonical_username)
         if 'pending_login' in session:
             del session['pending_login']
         return redirect(url_for('login'))
 
     # Verify PIN
     if pin_data['pin'] != pin_entered:
-        flash("Invalid verification code. Please check your email and try again.", "danger")
-        pending = session.get('pending_login', {})
+        _record_failed_attempt(canonical_username)
+        locked, secs = _check_lockout(canonical_username)
+        if locked:
+            _clear_pin(canonical_username)
+            if 'pending_login' in session:
+                del session['pending_login']
+            flash(f"Too many incorrect attempts. Account locked for {LOCKOUT_MINUTES} minutes.", "danger")
+            return redirect(url_for('login'))
+
+        conn = get_db_connection()
+        row = conn.execute("SELECT attempts FROM login_lockouts WHERE username = ? COLLATE NOCASE", (canonical_username,)).fetchone()
+        conn.close()
+        count = row['attempts'] if row else 1
+        remaining = max(0, MAX_ATTEMPTS - count)
+        flash(f"Invalid verification code. {remaining} attempt(s) remaining.", "danger")
         login_type = pending.get('role', 'Staff').lower()
         masked_email_str = pending.get('masked_email', 'your email')
-        return render_template('pin_verify.html', username=username, masked_email=masked_email_str, login_type=login_type)
+        return render_template('pin_verify.html', username=canonical_username, masked_email=masked_email_str, login_type=login_type)
 
     # PIN verified! Complete login
-    pending = session.get('pending_login', {})
-    if not pending:
-        flash("Session expired. Please login again.")
-        return redirect(url_for('login'))
-    
     conn = get_db_connection()
     try:
-        conn.execute("DELETE FROM login_lockouts WHERE username = ?", (username,))
-        conn.execute("DELETE FROM login_pins WHERE username = ?", (username,))
+        conn.execute("DELETE FROM login_lockouts WHERE username = ? COLLATE NOCASE", (canonical_username,))
+        conn.execute("DELETE FROM login_pins WHERE username = ? COLLATE NOCASE", (canonical_username,))
         log_audit('LOGIN_SUCCESS', f"Role: {pending.get('role')}", pending.get('user_id'), conn=conn)
         conn.commit()
     finally:
@@ -929,11 +1000,11 @@ def verify_pin():
     del session['pending_login']
 
     session['user_id']    = pending.get('user_id')
-    session['username']   = username
+    session['username']   = canonical_username
     session['department'] = pending.get('department')
     session['role']       = pending.get('role')
 
-    logger.info("Login successful: %s (%s)", username, pending.get('role'))
+    logger.info("Login successful: %s (%s)", canonical_username, pending.get('role'))
     flash("✅ Logged in successfully!", "success")
     return redirect(url_for('index'))
 
@@ -965,11 +1036,11 @@ def forgot():
         if step == '1':
             username = request.form.get('username', '').strip()
             user = conn.execute(
-                "SELECT security_question FROM users WHERE username = ?", (username,)
+                "SELECT security_question, username FROM users WHERE username = ? COLLATE NOCASE", (username,)
             ).fetchone()
             conn.close()
             if user:
-                return render_template('forgot.html', step='2', username=username, question=user['security_question'])
+                return render_template('forgot.html', step='2', username=user['username'], question=user['security_question'])
             flash("No account found with that username.")
             return redirect(url_for('forgot'))
 
@@ -984,15 +1055,16 @@ def forgot():
                 return redirect(url_for('forgot'))
 
             user = conn.execute(
-                "SELECT id, security_answer FROM users WHERE username = ?", (username,)
+                "SELECT id, username, security_answer FROM users WHERE username = ? COLLATE NOCASE", (username,)
             ).fetchone()
             if user and user['security_answer'] == answer:
+                canonical_user = user['username']
                 conn.execute(
-                    "UPDATE users SET password = ? WHERE username = ?",
-                    (generate_password_hash(new_pass), username)
+                    "UPDATE users SET password = ? WHERE id = ?",
+                    (generate_password_hash(new_pass), user['id'])
                 )
-                conn.execute("DELETE FROM login_lockouts WHERE username = ?", (username,))
-                log_audit('PASSWORD_RESET', f"Username: {username}", user['id'], conn=conn)
+                conn.execute("DELETE FROM login_lockouts WHERE username = ? COLLATE NOCASE", (canonical_user,))
+                log_audit('PASSWORD_RESET', f"Username: {canonical_user}", user['id'], conn=conn)
                 conn.commit()
                 conn.close()
                 flash("✅ Password reset successfully. You may now log in.")
