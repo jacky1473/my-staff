@@ -22,11 +22,11 @@ import time
 # ---------------------------------------------------------------------------
 # Environment File Loader (Native - no external dependencies required)
 # ---------------------------------------------------------------------------
-def _load_env_file():
+def _load_env_file(override=False):
     """Auto-load environment variables from .env file if present"""
     env_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
         '/data/.env',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
         '/app/.env',
         '.env'
     ]
@@ -40,13 +40,17 @@ def _load_env_file():
                             k, v = line.split('=', 1)
                             k = k.strip()
                             v = v.strip().strip("'\"")
-                            if k and k not in os.environ:
+                            if not k:
+                                continue
+                            curr_val = os.environ.get(k, '')
+                            is_placeholder = ('your-email' in curr_val or 'xxxx' in curr_val or not curr_val)
+                            if override or k.startswith('SMTP_') or is_placeholder or k not in os.environ:
                                 os.environ[k] = v
                 break
             except Exception:
                 pass
 
-_load_env_file()
+_load_env_file(override=True)
 
 # ---------------------------------------------------------------------------
 # App Setup
@@ -448,6 +452,7 @@ def send_email_otp(recipient_email, otp_code, username=None, company_name="Atten
     Configurable via environment variables (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TLS).
     Falls back to DEFAULT_TEST_EMAIL (ahmedfarman102@gmail.com) if no user email provided.
     """
+    _load_env_file(override=True)
     target_email = recipient_email.strip() if recipient_email and '@' in recipient_email else DEFAULT_TEST_EMAIL
     
     smtp_host = os.environ.get('SMTP_HOST', '').strip()
@@ -490,7 +495,7 @@ def send_email_otp(recipient_email, otp_code, username=None, company_name="Atten
     msg.attach(MIMEText(text_body, "plain"))
     msg.attach(MIMEText(html_body, "html"))
 
-    if not smtp_host:
+    if not smtp_host or not smtp_user or not smtp_pass or 'your-email' in smtp_user or 'xxxx' in smtp_pass:
         logger.info(f"[EMAIL_OTP] SMTP not configured. OTP generated for {target_email}: {otp_code}")
         return True, f"OTP dispatched for {target_email}"
 
