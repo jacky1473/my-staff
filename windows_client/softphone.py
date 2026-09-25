@@ -173,11 +173,70 @@ class SoftphoneAPIClient:
             return False, []
 
 
+def clean_for_tcl(arg):
+    """
+    Ensures all strings passed to Tcl only contain BMP characters (<= 0xFFFF).
+    Replaces common emojis with clean ASCII/BMP equivalents, and strips any
+    remaining non-BMP code points to prevent TclError crashes on Windows.
+    """
+    if isinstance(arg, str):
+        replacements = {
+            "\U0001f4de": "☎",          # Phone
+            "\U0001f510": "[2FA]",      # Key/Lock
+            "\U0001f512": "[LOCK]",     # Padlock
+            "\U0001f504": "↺",          # Refresh
+            "\U0001f4e2": "•",          # Announcement
+            "\U0001f6a8": "[!]",        # Siren
+            "\U0001f334": "[LEAVE]",    # Palm tree
+            "\U0001f514": "✉",          # Bell
+            "\U0001f4e5": "▼",          # Inbox
+            "\U0001f7e2": "●",          # Green circle
+            "\U0001f534": "●",          # Red circle
+            "\U0001f7e1": "●",          # Yellow circle
+            "\U0001f6aa": "[EXIT]",     # Door
+            "\U0001f3c1": "✔",          # Checkered flag
+            "\U0001f389": "*",          # Party popper
+            "\U0001f44d": "OK",         # Thumbs up
+            "\U0001f600": ":)",         # Grinning face
+            "\ufe0f": "",               # variation selector
+        }
+        for old, new in replacements.items():
+            if old in arg:
+                arg = arg.replace(old, new)
+        return "".join(c for c in arg if ord(c) <= 0xFFFF)
+    elif isinstance(arg, (tuple, list)):
+        return type(arg)(clean_for_tcl(x) for x in arg)
+    elif isinstance(arg, dict):
+        return {clean_for_tcl(k): clean_for_tcl(v) for k, v in arg.items()}
+    return arg
+
+
+class SafeTkProxy:
+    """
+    Transparent proxy around _tkinter.tkapp that sanitizes all arguments passed
+    to Tcl, preventing 'character U+xxxxx is above range (U+0000-U+FFFF)' errors.
+    """
+    def __init__(self, real_tk):
+        self._real_tk = real_tk
+
+    def call(self, *args):
+        safe_args = tuple(clean_for_tcl(a) for a in args)
+        return self._real_tk.call(*safe_args)
+
+    def eval(self, script):
+        return self._real_tk.eval(clean_for_tcl(script))
+
+    def __getattr__(self, name):
+        return getattr(self._real_tk, name)
+
+
 class SoftphoneApp(tk.Tk):
     """Main Softphone GUI Application."""
 
     def __init__(self):
         super().__init__()
+        # Wrap self.tk with SafeTkProxy to protect all widgets and dialogs from TclError
+        self.tk = SafeTkProxy(self.tk)
 
         self.title("MyStaff Softphone")
         self.geometry("340x520")
@@ -262,7 +321,7 @@ class SoftphoneApp(tk.Tk):
         header_frame = tk.Frame(self.container, bg=COLOR_BG, pady=12)
         header_frame.pack(fill="x")
 
-        lbl_logo = tk.Label(header_frame, text="⚙️", font=("Segoe UI Emoji", 28), bg=COLOR_BG, fg=COLOR_CYAN)
+        lbl_logo = tk.Label(header_frame, text="⚙", font=("Segoe UI", 26), bg=COLOR_BG, fg=COLOR_CYAN)
         lbl_logo.pack()
 
         lbl_title = tk.Label(header_frame, text="Initial Device Setup", font=("Segoe UI", 13, "bold"), bg=COLOR_BG, fg=COLOR_TEXT_PRIMARY)
@@ -353,7 +412,7 @@ class SoftphoneApp(tk.Tk):
         header_frame = tk.Frame(self.container, bg=COLOR_BG, pady=16)
         header_frame.pack(fill="x")
 
-        lbl_logo = tk.Label(header_frame, text="📞", font=("Segoe UI Emoji", 32), bg=COLOR_BG, fg=COLOR_CYAN)
+        lbl_logo = tk.Label(header_frame, text="☎", font=("Segoe UI", 30), bg=COLOR_BG, fg=COLOR_CYAN)
         lbl_logo.pack()
 
         lbl_title = tk.Label(header_frame, text="MyStaff Softphone", font=("Segoe UI", 14, "bold"), bg=COLOR_BG, fg=COLOR_TEXT_PRIMARY)
@@ -405,7 +464,7 @@ class SoftphoneApp(tk.Tk):
         # Reconfigure Server & Secret Link Button
         btn_reconfig = tk.Button(
             self.container,
-            text="⚙️ Reconfigure Server / Secret Code",
+            text="⚙ Reconfigure Server / Secret Code",
             font=("Segoe UI", 8),
             bg=COLOR_BG,
             fg=COLOR_CYAN,
@@ -469,7 +528,7 @@ class SoftphoneApp(tk.Tk):
         dlg.transient(self)
         dlg.grab_set()
 
-        tk.Label(dlg, text="🔐", font=("Segoe UI Emoji", 24), bg=COLOR_BG, fg=COLOR_GOLD).pack(pady=(12, 2))
+        tk.Label(dlg, text="[ 2-FACTOR AUTH ]", font=("Segoe UI", 10, "bold"), bg=COLOR_BG, fg=COLOR_GOLD).pack(pady=(12, 2))
         tk.Label(dlg, text="Verification Code", font=("Segoe UI", 12, "bold"), bg=COLOR_BG, fg=COLOR_TEXT_PRIMARY).pack()
         tk.Label(dlg, text=f"Enter 4-digit PIN sent to:\n{masked_email}", font=("Segoe UI", 8), bg=COLOR_BG, fg=COLOR_TEXT_MUTED, justify="center").pack(pady=4)
 
@@ -532,10 +591,10 @@ class SoftphoneApp(tk.Tk):
         action_box = tk.Frame(top_bar, bg=COLOR_PANEL)
         action_box.pack(side="right")
 
-        btn_sync = tk.Button(action_box, text="🔄", font=("Segoe UI Emoji", 9), bg=COLOR_PANEL, fg=COLOR_TEXT_PRIMARY, bd=0, relief="flat", cursor="hand2", command=self.refresh_status_async)
+        btn_sync = tk.Button(action_box, text="↺", font=("Segoe UI", 10, "bold"), bg=COLOR_PANEL, fg=COLOR_TEXT_PRIMARY, bd=0, relief="flat", cursor="hand2", command=self.refresh_status_async)
         btn_sync.pack(side="left", padx=2)
 
-        btn_sett = tk.Button(action_box, text="⚙️", font=("Segoe UI Emoji", 9), bg=COLOR_PANEL, fg=COLOR_TEXT_PRIMARY, bd=0, relief="flat", cursor="hand2", command=self.show_settings_dialog)
+        btn_sett = tk.Button(action_box, text="⚙", font=("Segoe UI", 10), bg=COLOR_PANEL, fg=COLOR_TEXT_PRIMARY, bd=0, relief="flat", cursor="hand2", command=self.show_settings_dialog)
         btn_sett.pack(side="left", padx=2)
 
         # CLOCK & DATE STRIP
@@ -555,7 +614,7 @@ class SoftphoneApp(tk.Tk):
         # Big Softphone Punch Button
         self.btn_softphone_action = tk.Button(
             self.call_card,
-            text="📞 CLOCK IN",
+            text="▶  CLOCK IN",
             font=("Segoe UI", 13, "bold"),
             bg=COLOR_GREEN,
             fg="#ffffff",
@@ -610,7 +669,7 @@ class SoftphoneApp(tk.Tk):
 
         self.lbl_notice_ticker = tk.Label(
             self.notice_card,
-            text="📢 No active HR announcements",
+            text="• No active HR announcements",
             font=("Segoe UI", 8),
             bg=COLOR_BG,
             fg=COLOR_TEXT_MUTED,
@@ -625,7 +684,7 @@ class SoftphoneApp(tk.Tk):
 
         btn_leave = tk.Button(
             bottom_nav,
-            text="🌴 Apply Leave",
+            text="✎ Apply Leave",
             font=("Segoe UI", 8, "bold"),
             bg=COLOR_PANEL,
             fg=COLOR_CYAN,
@@ -638,7 +697,7 @@ class SoftphoneApp(tk.Tk):
 
         btn_notices = tk.Button(
             bottom_nav,
-            text="🔔 Notices",
+            text="✉ Notices",
             font=("Segoe UI", 8),
             bg=COLOR_PANEL,
             fg=COLOR_TEXT_PRIMARY,
@@ -651,7 +710,7 @@ class SoftphoneApp(tk.Tk):
 
         btn_tray = tk.Button(
             bottom_nav,
-            text="📥 Minimize",
+            text="▼ Minimize",
             font=("Segoe UI", 8),
             bg=COLOR_PANEL,
             fg=COLOR_TEXT_MUTED,
@@ -747,27 +806,27 @@ class SoftphoneApp(tk.Tk):
             if is_in:
                 # Active in Shift
                 self.lbl_status_dot.config(fg=COLOR_GREEN)
-                self.lbl_shift_status.config(text="🟢 Active Shift in Progress", fg=COLOR_GREEN)
+                self.lbl_shift_status.config(text="● Active Shift in Progress", fg=COLOR_GREEN)
                 self.btn_softphone_action.config(
-                    text="🚪 CLOCK OUT",
+                    text="■ CLOCK OUT",
                     bg=COLOR_RED,
                     activebackground=COLOR_RED_HOVER
                 )
             elif is_done:
                 # Shift Finished for today
                 self.lbl_status_dot.config(fg=COLOR_TEXT_MUTED)
-                self.lbl_shift_status.config(text=f"🏁 Shift Completed ({att.get('duration', '')})", fg=COLOR_TEXT_MUTED)
+                self.lbl_shift_status.config(text=f"✔ Shift Completed ({att.get('duration', '')})", fg=COLOR_TEXT_MUTED)
                 self.btn_softphone_action.config(
-                    text="🏁 SHIFT ENDED",
+                    text="✔ SHIFT ENDED",
                     bg=COLOR_PANEL,
                     state="disabled"
                 )
             elif status in ("PL", "UL", "LWP"):
                 # On Leave
                 self.lbl_status_dot.config(fg=COLOR_GOLD)
-                self.lbl_shift_status.config(text=f"🌴 On Approved Leave ({status})", fg=COLOR_GOLD)
+                self.lbl_shift_status.config(text=f"★ On Approved Leave ({status})", fg=COLOR_GOLD)
                 self.btn_softphone_action.config(
-                    text="🌴 ON LEAVE",
+                    text="★ ON LEAVE",
                     bg=COLOR_PANEL,
                     state="disabled"
                 )
@@ -776,7 +835,7 @@ class SoftphoneApp(tk.Tk):
                 self.lbl_status_dot.config(fg=COLOR_TEXT_MUTED)
                 self.lbl_shift_status.config(text="Ready to Clock In", fg=COLOR_TEXT_MUTED)
                 self.btn_softphone_action.config(
-                    text="📞 CLOCK IN",
+                    text="▶ CLOCK IN",
                     bg=COLOR_GREEN,
                     activebackground=COLOR_GREEN_HOVER,
                     state="normal"
@@ -786,10 +845,10 @@ class SoftphoneApp(tk.Tk):
         if hasattr(self, "lbl_notice_ticker"):
             if self.notifications:
                 n = self.notifications[0]
-                icon = "🚨" if n.get("type") in ("warning", "urgent") else "📢"
-                self.lbl_notice_ticker.config(text=f"{icon} {n.get('title')}: {n.get('message')}")
+                icon = "[!] " if n.get("type") in ("warning", "urgent") else "• "
+                self.lbl_notice_ticker.config(text=f"{icon}{n.get('title')}: {n.get('message')}")
             else:
-                self.lbl_notice_ticker.config(text="📢 No active HR announcements")
+                self.lbl_notice_ticker.config(text="• No active HR announcements")
 
     def handle_token_expired(self):
         self.api.token = None
@@ -837,14 +896,14 @@ class SoftphoneApp(tk.Tk):
     # -----------------------------------------------------------------------
     def show_leave_dialog(self):
         dlg = tk.Toplevel(self)
-        dlg.title("🌴 Request Leave")
+        dlg.title("Request Leave")
         dlg.geometry("320x390")
         dlg.resizable(False, False)
         dlg.configure(bg=COLOR_BG)
         dlg.transient(self)
         dlg.grab_set()
 
-        tk.Label(dlg, text="🌴 Submit Leave Request", font=("Segoe UI", 11, "bold"), bg=COLOR_BG, fg=COLOR_CYAN).pack(pady=(12, 2))
+        tk.Label(dlg, text="Submit Leave Request", font=("Segoe UI", 11, "bold"), bg=COLOR_BG, fg=COLOR_CYAN).pack(pady=(12, 2))
         tk.Label(
             dlg,
             text="Dates and reason will be reviewed.\nAdmin will classify and assign the Leave Type.",
@@ -919,13 +978,13 @@ class SoftphoneApp(tk.Tk):
     # -----------------------------------------------------------------------
     def show_notices_dialog(self):
         dlg = tk.Toplevel(self)
-        dlg.title("📢 HR Notices & Bulletins")
+        dlg.title("HR Notices & Bulletins")
         dlg.geometry("320x360")
         dlg.resizable(False, False)
         dlg.configure(bg=COLOR_BG)
         dlg.transient(self)
 
-        tk.Label(dlg, text="📢 Company Announcements", font=("Segoe UI", 11, "bold"), bg=COLOR_BG, fg=COLOR_CYAN).pack(pady=(12, 6))
+        tk.Label(dlg, text="Company Announcements", font=("Segoe UI", 11, "bold"), bg=COLOR_BG, fg=COLOR_CYAN).pack(pady=(12, 6))
 
         scroll_frame = tk.Frame(dlg, bg=COLOR_BG)
         scroll_frame.pack(fill="both", expand=True, padx=12, pady=4)
@@ -939,7 +998,7 @@ class SoftphoneApp(tk.Tk):
                 card.pack(fill="x", pady=4)
 
                 color = COLOR_RED if is_warn else COLOR_CYAN
-                icon = "🚨 " if is_warn else "📢 "
+                icon = "[!] " if is_warn else "• "
                 tk.Label(card, text=icon + n.get("title", ""), font=("Segoe UI", 8, "bold"), bg=COLOR_PANEL, fg=color, anchor="w").pack(fill="x")
                 tk.Label(card, text=n.get("message", ""), font=("Segoe UI", 8), bg=COLOR_PANEL, fg=COLOR_TEXT_PRIMARY, wraplength=280, justify="left").pack(fill="x", pady=2)
                 tk.Label(card, text=n.get("created_at", "")[:16], font=("Segoe UI", 6), bg=COLOR_PANEL, fg=COLOR_TEXT_MUTED, anchor="e").pack(fill="x")
@@ -955,7 +1014,7 @@ class SoftphoneApp(tk.Tk):
         dlg.configure(bg=COLOR_BG)
         dlg.transient(self)
 
-        tk.Label(dlg, text="⚙️ Softphone Settings", font=("Segoe UI", 11, "bold"), bg=COLOR_BG, fg=COLOR_CYAN).pack(pady=(12, 10))
+        tk.Label(dlg, text="⚙ Softphone Settings", font=("Segoe UI", 11, "bold"), bg=COLOR_BG, fg=COLOR_CYAN).pack(pady=(12, 10))
 
         form = tk.Frame(dlg, bg=COLOR_PANEL, padx=12, pady=10)
         form.pack(fill="x", padx=12)
@@ -978,7 +1037,7 @@ class SoftphoneApp(tk.Tk):
 
         btn_reconfig = tk.Button(
             dlg,
-            text="⚙️ Reconfigure Server / Secret Code",
+            text="⚙ Reconfigure Server / Secret Code",
             font=("Segoe UI", 8),
             bg=COLOR_PANEL,
             fg=COLOR_CYAN,
@@ -988,7 +1047,7 @@ class SoftphoneApp(tk.Tk):
         )
         btn_reconfig.pack(fill="x", padx=12, pady=(6, 2), ipady=3)
 
-        btn_logout = tk.Button(dlg, text="🚪 Sign Out / Switch User", font=("Segoe UI", 8), bg=COLOR_PANEL, fg=COLOR_RED, relief="flat", cursor="hand2", command=lambda: [dlg.destroy(), self.handle_sign_out()])
+        btn_logout = tk.Button(dlg, text="✕ Sign Out / Switch User", font=("Segoe UI", 8), bg=COLOR_PANEL, fg=COLOR_RED, relief="flat", cursor="hand2", command=lambda: [dlg.destroy(), self.handle_sign_out()])
         btn_logout.pack(fill="x", padx=12, pady=(4, 10), ipady=4)
 
     def handle_sign_out(self):
