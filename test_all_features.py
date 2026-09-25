@@ -44,6 +44,26 @@ def run_tests():
     conn.close()
     print(f"  Target staff user for test: '{staff_username}' (ID: {staff_user['id']})")
 
+    # Ensure test staff has secret_code
+    conn = get_db()
+    staff_user = conn.execute("SELECT * FROM users WHERE id = ?", (staff_user['id'],)).fetchone()
+    staff_secret = staff_user['secret_code']
+    if not staff_secret:
+        staff_secret = "654321"
+        conn.execute("UPDATE users SET secret_code = ? WHERE id = ?", (staff_secret, staff_user['id']))
+        conn.commit()
+    conn.close()
+
+    # 1.5 Test First-time Device Setup & Secret Number Verification
+    print("\n[STEP 1.5] Testing First-Time Device Setup & Secret Number Verification...")
+    r_bad_secret = requests.post(f"{BASE_URL}/api/auth/verify-secret", json={"username": staff_username, "secret_code": "000000"})
+    assert r_bad_secret.status_code == 401, f"Expected 401 for wrong secret, got {r_bad_secret.status_code}"
+    print("  ✅ Negative secret verification correctly rejected with 401")
+
+    r_ok_secret = requests.post(f"{BASE_URL}/api/auth/verify-secret", json={"username": staff_username, "secret_code": staff_secret})
+    assert r_ok_secret.status_code == 200, f"Expected 200 for valid secret, got {r_ok_secret.status_code}"
+    print(f"  ✅ Device paired successfully with Admin Secret Code '{staff_secret}': {r_ok_secret.json().get('message')}")
+
     # 2. Test Softphone Login (Invalid credentials test)
     print("\n[STEP 2] Testing Softphone Login Negative Case...")
     r = requests.post(f"{BASE_URL}/api/auth/login", json={"username": staff_username, "password": "wrongpassword"})

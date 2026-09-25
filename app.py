@@ -224,10 +224,20 @@ def init_db():
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_by TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN reviewed_at TEXT")
     _safe_alter(conn, "ALTER TABLE leaves ADD COLUMN admin_remark TEXT")
+    _safe_alter(conn, "ALTER TABLE users ADD COLUMN secret_code TEXT")
 
     # Ensure existing users default to active and admin has test email if empty
     conn.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
     conn.execute("UPDATE users SET email = ? WHERE (email IS NULL OR email = '') AND role = 'Admin'", (DEFAULT_TEST_EMAIL,))
+
+    # Generate default 6-digit secret_code for staff if not assigned
+    try:
+        staff_no_sec = conn.execute("SELECT id FROM users WHERE role != 'Admin' AND (secret_code IS NULL OR secret_code = '')").fetchall()
+        for r_sec in staff_no_sec:
+            gen_sec = str(random.randint(100000, 999999))
+            conn.execute("UPDATE users SET secret_code = ? WHERE id = ?", (gen_sec, r_sec['id']))
+    except Exception as e:
+        logger.error(f"Error setting default secret_codes: {e}")
 
     # Tables for multi-worker concurrency (PIN auth & brute force lockout)
     conn.execute('''CREATE TABLE IF NOT EXISTS login_pins (
@@ -1374,11 +1384,11 @@ def admin_dashboard():
     today = today_str()
     conn  = get_db_connection()
     users = conn.execute(
-        "SELECT id, username, department, shift, weekoff, pl_quota FROM users WHERE role != 'Admin' AND (is_active = 1 OR is_active IS NULL) ORDER BY department, username"
+        "SELECT id, username, department, shift, weekoff, pl_quota, secret_code FROM users WHERE role != 'Admin' AND (is_active = 1 OR is_active IS NULL) ORDER BY department, username"
     ).fetchall()
 
     inactive_users = conn.execute(
-        "SELECT id, username, department, shift, weekoff, pl_quota FROM users WHERE role != 'Admin' AND is_active = 0 ORDER BY department, username"
+        "SELECT id, username, department, shift, weekoff, pl_quota, secret_code FROM users WHERE role != 'Admin' AND is_active = 0 ORDER BY department, username"
     ).fetchall()
 
     try:
@@ -1803,6 +1813,17 @@ def admin_action():
             else:
                 flash("Invalid ID.")
 
+        elif action_type == 'update_secret_code':
+            user_id = request.form.get('user_id')
+            new_code = request.form.get('secret_code', '').strip()
+            if not new_code:
+                new_code = str(random.randint(100000, 999999))
+            conn.execute("UPDATE users SET secret_code = ? WHERE id = ?", (new_code, user_id))
+            target_user = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+            username = target_user['username'] if target_user else f"ID {user_id}"
+            log_audit('SECRET_CODE_UPDATED', f"User: {username}, Code: {new_code}", session['user_id'], conn=conn)
+            flash(f"🔑 Secret Number updated to '{new_code}' for '{username}'.")
+
         elif action_type == 'post_announcement':
             title    = request.form.get('ann_title', '').strip()
             body     = request.form.get('ann_body', '').strip()
@@ -2141,6 +2162,46 @@ def require_api_token(f):
         g.api_token = token
         return f(*args, **kwargs)
     return decorated
+
+
+@app.route('/api/auth/verify-secret', methods=['POST'])
+def api_auth_verify_secret():
+    """Verify staff username and Admin-issued secret code for first-time softphone setup"""
+    data = request.get_json(silent=True) or request.form
+    username = data.get('username', '').strip()
+    secret_code = data.get('secret_code', '').strip()
+    device_info = data.get('device_info', 'Windows Softphone')
+
+    if not username or not secret_code:
+        return jsonify({"status": "error", "error": "Username and Secret Number are required."}), 400
+
+    conn = get_db_connection()
+    user = conn.execute('SELECT * FROM users WHERE username = ? COLLATE NOCASE', (username,)).fetchone()
+    conn.close()
+
+    if not user:
+        return jsonify({"status": "error", "error": f"Staff user '{username}' not found on server."}), 404
+
+    if user['role'] != 'Staff':
+        return jsonify({"status": "error", "error": "Device activation is reserved for staff softphones."}), 403
+
+    if 'is_active' in user.keys() and user['is_active'] == 0:
+        return jsonify({"status": "error", "error": "Account has been deactivated. Contact HR."}), 403
+
+    user_secret = user['secret_code'] if 'secret_code' in user.keys() and user['secret_code'] else ''
+    if not user_secret or str(user_secret).strip() != secret_code:
+        return jsonify({"status": "error", "error": "Invalid Secret Number. Please contact your Admin for your device code."}), 401
+
+    company_name = get_cached_company_name()
+    log_audit('DEVICE_ACTIVATED', f"Device: {device_info} for user {user['username']}", user['id'])
+
+    return jsonify({
+        "status": "success",
+        "message": f"Device successfully paired and activated for {user['username']}!",
+        "username": user['username'],
+        "department": user['department'],
+        "company_name": company_name
+    })
 
 
 @app.route('/api/auth/login', methods=['POST'])

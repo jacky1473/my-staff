@@ -87,6 +87,18 @@ class SoftphoneAPIClient:
         except Exception as e:
             return False, {"error": str(e)}
 
+    def verify_secret(self, username, secret_code):
+        try:
+            r = self.session.post(
+                f"{self.base_url}/api/auth/verify-secret",
+                json={"username": username, "secret_code": secret_code, "device_info": "Windows Softphone"},
+                headers=self._headers(),
+                timeout=8
+            )
+            return r.status_code == 200, r.json()
+        except Exception as e:
+            return False, {"error": f"Connection failed: {e}"}
+
     def login(self, username, password):
         try:
             r = self.session.post(
@@ -198,13 +210,18 @@ class SoftphoneApp(tk.Tk):
         # Start Clock Ticker
         self.after(1000, self.update_clock_timer)
 
-        # Decide initial screen
+        # Decide initial screen:
+        # 1. Active Token -> Main Softphone
+        # 2. Device Activated -> Login Screen
+        # 3. Not Activated -> Initial Setup & Secret Number Screen
         if self.api.token:
             self.show_main_screen()
             self.refresh_status_async()
             self.start_background_polling()
-        else:
+        elif self.config_data.get("is_activated"):
             self.show_login_screen()
+        else:
+            self.show_setup_screen()
 
         # Initialize System Tray in background if available
         if HAS_TRAY:
@@ -220,7 +237,7 @@ class SoftphoneApp(tk.Tk):
                     return json.load(f)
             except Exception:
                 pass
-        return {"server_url": DEFAULT_SERVER_URL, "username": "", "token": None}
+        return {"server_url": DEFAULT_SERVER_URL, "username": "", "token": None, "is_activated": False}
 
     def save_config(self):
         try:
@@ -235,6 +252,97 @@ class SoftphoneApp(tk.Tk):
     def clear_container(self):
         for widget in self.container.winfo_children():
             widget.destroy()
+
+    # -----------------------------------------------------------------------
+    # 0. INITIAL SETUP & ACTIVATION SCREEN (First-time install)
+    # -----------------------------------------------------------------------
+    def show_setup_screen(self):
+        self.clear_container()
+
+        header_frame = tk.Frame(self.container, bg=COLOR_BG, pady=12)
+        header_frame.pack(fill="x")
+
+        lbl_logo = tk.Label(header_frame, text="⚙️", font=("Segoe UI Emoji", 28), bg=COLOR_BG, fg=COLOR_CYAN)
+        lbl_logo.pack()
+
+        lbl_title = tk.Label(header_frame, text="Initial Device Setup", font=("Segoe UI", 13, "bold"), bg=COLOR_BG, fg=COLOR_TEXT_PRIMARY)
+        lbl_title.pack()
+
+        lbl_sub = tk.Label(header_frame, text="Enter Server IP & Staff Secret Number", font=("Segoe UI", 8), bg=COLOR_BG, fg=COLOR_TEXT_MUTED)
+        lbl_sub.pack()
+
+        # Setup Form Card
+        form_card = tk.Frame(self.container, bg=COLOR_PANEL, bd=1, relief="flat", padx=16, pady=12)
+        form_card.pack(fill="x", padx=16, pady=4)
+
+        # Server URL / IP
+        tk.Label(form_card, text="SERVER IP / URL", font=("Segoe UI", 7, "bold"), bg=COLOR_PANEL, fg=COLOR_CYAN).pack(anchor="w", pady=(0, 2))
+        self.ent_setup_server = tk.Entry(form_card, bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN, bd=1, relief="flat", font=("Segoe UI", 9))
+        self.ent_setup_server.insert(0, self.config_data.get("server_url", DEFAULT_SERVER_URL))
+        self.ent_setup_server.pack(fill="x", pady=(0, 8), ipady=3)
+
+        # Staff Username
+        tk.Label(form_card, text="STAFF USERNAME", font=("Segoe UI", 7, "bold"), bg=COLOR_PANEL, fg=COLOR_CYAN).pack(anchor="w", pady=(0, 2))
+        self.ent_setup_user = tk.Entry(form_card, bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN, bd=1, relief="flat", font=("Segoe UI", 9))
+        self.ent_setup_user.insert(0, self.config_data.get("username", ""))
+        self.ent_setup_user.pack(fill="x", pady=(0, 8), ipady=3)
+
+        # Staff Secret Number
+        tk.Label(form_card, text="SECRET NUMBER (FROM ADMIN)", font=("Segoe UI", 7, "bold"), bg=COLOR_PANEL, fg=COLOR_GOLD).pack(anchor="w", pady=(0, 2))
+        self.ent_setup_secret = tk.Entry(form_card, bg=COLOR_INPUT_BG, fg=COLOR_TEXT_PRIMARY, insertbackground=COLOR_CYAN, bd=1, relief="flat", font=("Segoe UI", 11, "bold"), justify="center")
+        self.ent_setup_secret.pack(fill="x", pady=(0, 12), ipady=3)
+
+        # Activate Button
+        self.btn_activate = tk.Button(
+            form_card,
+            text="VERIFY & ACTIVATE DEVICE",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLOR_CYAN,
+            fg="#000000",
+            activebackground="#38bdf8",
+            activeforeground="#000000",
+            relief="flat",
+            cursor="hand2",
+            command=self.handle_activate
+        )
+        self.btn_activate.pack(fill="x", ipady=5)
+
+        # Feedback Message Label
+        self.lbl_setup_msg = tk.Label(self.container, text="Secret number is provided by your Admin.", font=("Segoe UI", 7), bg=COLOR_BG, fg=COLOR_TEXT_MUTED, wraplength=290)
+        self.lbl_setup_msg.pack(pady=4)
+
+    def handle_activate(self):
+        server = self.ent_setup_server.get().strip().rstrip("/")
+        username = self.ent_setup_user.get().strip()
+        secret = self.ent_setup_secret.get().strip()
+
+        if not server or not username or not secret:
+            self.lbl_setup_msg.config(text="All fields (Server, Username, Secret Number) are required.", fg=COLOR_RED)
+            return
+
+        self.btn_activate.config(state="disabled", text="Verifying...")
+        self.lbl_setup_msg.config(text="Connecting to server and checking secret code...", fg=COLOR_TEXT_MUTED)
+
+        def worker():
+            self.api.base_url = server
+            ok, res = self.api.verify_secret(username, secret)
+            self.after(0, lambda: self.activate_response_callback(server, username, ok, res))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def activate_response_callback(self, server, username, ok, res):
+        self.btn_activate.config(state="normal", text="VERIFY & ACTIVATE DEVICE")
+        if ok:
+            self.config_data["server_url"] = server
+            self.config_data["username"] = username
+            self.config_data["is_activated"] = True
+            self.save_config()
+            self.api.base_url = server
+            messagebox.showinfo("Device Paired", f"Device paired successfully for '{username}'!\nPlease sign in with your password.")
+            self.show_login_screen()
+        else:
+            err = res.get("error", "Activation failed. Please check Server IP and Secret Number.")
+            self.lbl_setup_msg.config(text=err, fg=COLOR_RED)
 
     # -----------------------------------------------------------------------
     # 1. LOGIN SCREEN
@@ -292,7 +400,21 @@ class SoftphoneApp(tk.Tk):
 
         # Status / Feedback label
         self.lbl_login_msg = tk.Label(self.container, text="", font=("Segoe UI", 8), bg=COLOR_BG, fg=COLOR_GOLD, wraplength=300)
-        self.lbl_login_msg.pack(pady=8)
+        self.lbl_login_msg.pack(pady=4)
+
+        # Reconfigure Server & Secret Link Button
+        btn_reconfig = tk.Button(
+            self.container,
+            text="⚙️ Reconfigure Server / Secret Code",
+            font=("Segoe UI", 8),
+            bg=COLOR_BG,
+            fg=COLOR_CYAN,
+            bd=0,
+            relief="flat",
+            cursor="hand2",
+            command=self.show_setup_screen
+        )
+        btn_reconfig.pack(pady=2)
 
     def handle_login(self):
         server = self.ent_server.get().strip().rstrip("/")
@@ -854,8 +976,20 @@ class SoftphoneApp(tk.Tk):
         btn_save = tk.Button(form, text="Save Settings", font=("Segoe UI", 8, "bold"), bg=COLOR_CYAN, fg="#000", relief="flat", cursor="hand2", command=save_settings)
         btn_save.pack(fill="x", pady=4, ipady=3)
 
+        btn_reconfig = tk.Button(
+            dlg,
+            text="⚙️ Reconfigure Server / Secret Code",
+            font=("Segoe UI", 8),
+            bg=COLOR_PANEL,
+            fg=COLOR_CYAN,
+            relief="flat",
+            cursor="hand2",
+            command=lambda: [dlg.destroy(), self.show_setup_screen()]
+        )
+        btn_reconfig.pack(fill="x", padx=12, pady=(6, 2), ipady=3)
+
         btn_logout = tk.Button(dlg, text="🚪 Sign Out / Switch User", font=("Segoe UI", 8), bg=COLOR_PANEL, fg=COLOR_RED, relief="flat", cursor="hand2", command=lambda: [dlg.destroy(), self.handle_sign_out()])
-        btn_logout.pack(fill="x", padx=12, pady=10, ipady=4)
+        btn_logout.pack(fill="x", padx=12, pady=(4, 10), ipady=4)
 
     def handle_sign_out(self):
         if messagebox.askyesno("Sign Out", "Are you sure you want to sign out from the softphone?"):

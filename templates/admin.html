@@ -378,6 +378,35 @@
         <div class="elevated-card p-3">
           <h6 class="page-subtitle mb-2">⚙️ Password & Schedule</h6>
           
+          <!-- Staff Secret Codes (For Windows Softphone Setup) -->
+          <div class="mb-3 pb-2 border-bottom border-secondary">
+            <label class="section-label">🔑 Staff Secret Codes (Windows Softphone Pairing)</label>
+            <div class="table-responsive mb-2" style="max-height: 180px; overflow-y: auto;">
+              <table class="table-premium table-sm" style="font-size: 0.78rem;">
+                <thead>
+                  <tr><th>Staff</th><th>Dept</th><th>Secret Code</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {% for u in users %}
+                  <tr>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td class="text-muted" style="font-size: 0.7rem;">{{ u.department }}</td>
+                    <td><span class="badge bg-dark border border-info text-info font-monospace" style="font-size: 0.78rem;">{{ u.secret_code or 'None' }}</span></td>
+                    <td>
+                      <form action="/admin_action" method="POST" style="display:inline;">
+                        <input type="hidden" name="action_type" value="update_secret_code">
+                        <input type="hidden" name="user_id" value="{{ u.id }}">
+                        <button type="submit" class="btn btn-outline-info btn-sm py-0 px-2" style="font-size: 0.7rem;" title="Generate new code">🔄 New</button>
+                      </form>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="text-muted small mb-0" style="font-size: 0.72rem;">Share this 6-digit Secret Code with the employee for initial Windows softphone setup.</p>
+          </div>
+
           <!-- Shift/Schedule -->
           <form action="/admin_action" method="POST" class="mb-3 pb-2 border-bottom border-secondary">
             <input type="hidden" name="action_type" value="change_shift">
